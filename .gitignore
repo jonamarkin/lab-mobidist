@@ -1,0 +1,10 @@
+# Build output
+/bin/
+*.exe
+
+# Test / coverage artifacts
+*.out
+coverage.html
+
+# Local editor/agent settings
+.claude/settings.local.json
