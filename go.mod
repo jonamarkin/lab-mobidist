@@ -1,3 +1,3 @@
-module github.com/jonamarkin/kademlia-lab
+module github.com/jonamarkin/lab-mobidist
 
 go 1.26.4
