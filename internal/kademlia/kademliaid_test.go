@@ -32,6 +32,7 @@ func TestBucketIndexWorkedExample(t *testing.T) {
 		{0b0010, 4, 2},
 		{0b1000, 14, 3},
 		{0b1111, 9, 3},
+		{0b1110, 8, 3},
 	}
 	for _, c := range cases {
 		other := idLow(c.other)
