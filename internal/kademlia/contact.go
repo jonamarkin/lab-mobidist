@@ -25,11 +25,24 @@ func (c Contact) String() string {
 }
 
 // SortContactsByDistance sorts contacts in place, closest to target first.
-// Distances are computed on the fly rather than stored in the Contact, so
-// the same contacts can be sorted for different targets concurrently.
-// Distinct IDs never tie (XOR is unidirectional), so the order is unique.
+// Distances are kept in a temporary slice rather than stored in the
+// Contact, so the same contacts can be sorted for different targets
+// concurrently. Each distance is computed once (n XORs) instead of in
+// every comparison (about 2·n·log n XORs). Distinct IDs never tie (XOR is
+// unidirectional), so the order is unique.
 func SortContactsByDistance(contacts []Contact, target KademliaID) {
-	slices.SortFunc(contacts, func(a, b Contact) int {
-		return a.ID.CalcDistance(target).Cmp(b.ID.CalcDistance(target))
+	type entry struct {
+		dist    KademliaID
+		contact Contact
+	}
+	entries := make([]entry, len(contacts))
+	for i, c := range contacts {
+		entries[i] = entry{c.ID.CalcDistance(target), c}
+	}
+	slices.SortFunc(entries, func(a, b entry) int {
+		return a.dist.Cmp(b.dist)
 	})
+	for i, e := range entries {
+		contacts[i] = e.contact
+	}
 }

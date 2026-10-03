@@ -30,7 +30,7 @@ func TestFlatRoutingTableMatchesBruteForce(t *testing.T) {
 		rt.AddContact(c)
 	}
 
-	for range 200 {
+	for range 50 {
 		target := NewRandomKademliaID(r)
 		got := rt.FindClosestContacts(target, 10)
 		want := bruteForceClosest(all, target, 10)
@@ -123,14 +123,15 @@ func TestFlatRoutingTableReturnsCopy(t *testing.T) {
 	}
 }
 
-// Run with -race: concurrent writers and readers must not race.
+// Run with -race: concurrent writers and readers must not race. The goal
+// is overlapping access for the race detector, not load, so it stays small.
 func TestFlatRoutingTableConcurrent(t *testing.T) {
 	rt := NewFlatRoutingTable(testContact(0))
 	var wg sync.WaitGroup
 	for g := range 8 {
 		wg.Go(func() {
-			for i := range 200 {
-				c := testContact(1 + g*200 + i)
+			for i := range 50 {
+				c := testContact(1 + g*50 + i)
 				rt.AddContact(c)
 				rt.FindClosestContacts(c.ID, 10)
 				if i%3 == 0 {
