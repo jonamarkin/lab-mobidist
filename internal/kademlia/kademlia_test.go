@@ -138,6 +138,9 @@ func TestLookupMatchesOracle(t *testing.T) {
 				if !slices.Equal(res.Contacts, want) {
 					t.Fatalf("target %v:\n got  %v\n want %v", target.Short(), res.Contacts, want)
 				}
+				if res.Hops < 1 || res.Hops > res.Probes {
+					t.Errorf("hops = %d with %d probes", res.Hops, res.Probes)
+				}
 			}
 		})
 	}

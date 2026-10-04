@@ -8,3 +8,6 @@ coverage.html
 
 # Local editor/agent settings
 .claude/settings.local.json
+
+# Experiment output (regenerate with make experiments)
+/results/

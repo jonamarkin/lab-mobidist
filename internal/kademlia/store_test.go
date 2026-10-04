@@ -144,9 +144,14 @@ func TestStoreAlone(t *testing.T) {
 	if err != nil || len(res.StoredAt) != 1 || res.StoredAt[0] != k.Me() {
 		t.Fatalf("Store = %+v, %v", res, err)
 	}
+	var logs syncBuffer
+	k.log = slog.New(slog.NewJSONHandler(&logs, nil))
 	found, err := k.LookupData(context.Background(), res.Key)
 	if err != nil || string(found.Value) != "solo" || found.From != k.Me() {
 		t.Errorf("LookupData = %+v, %v", found, err)
+	}
+	if !bytes.Contains(logs.bytes(), []byte(`"msg":"lookup_done"`)) || !bytes.Contains(logs.bytes(), []byte(`"local":true`)) {
+		t.Errorf("local hit not logged: %s", logs.bytes())
 	}
 }
 

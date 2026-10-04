@@ -16,6 +16,13 @@ type LookupResult struct {
 	Probes   int       // FIND_NODE/FIND_VALUE RPCs started (each may retransmit internally)
 	Failed   int       // probes that got no response
 
+	// Hops is the length of the chain of RPCs that led to the closest node
+	// found (or, for LookupData, to the node that had the value): a contact
+	// from our own routing table is one hop away, a contact learned from a
+	// contact h hops away is h+1 hops away. This is the "hop count" that
+	// Kademlia's O(log N) analysis is about.
+	Hops int
+
 	Value []byte  // LookupData only: the value, verified against its key
 	From  Contact // LookupData only: the node the value came from
 }
@@ -39,6 +46,10 @@ func (k *Kademlia) LookupContact(ctx context.Context, target KademliaID) (Lookup
 // a value whose hash matches the key.
 func (k *Kademlia) LookupData(ctx context.Context, key KademliaID) (LookupResult, error) {
 	if value, ok := k.store.Get(key); ok {
+		// A local hit is a successful lookup too, so it is logged (with
+		// local=true and no probes, so analyses can tell it apart).
+		k.log.Info("lookup_done", "lookup", k.lookups.Add(1), "kind", "value", "target", key.Short(),
+			"ok", true, "probes", 0, "failed", 0, "found", 0, "hops", 0, "value", true, "local", true, "ms", 0)
 		return LookupResult{Value: value, From: k.me}, nil
 	}
 	res, err := k.lookup(ctx, key, "value", func(ctx context.Context, c Contact) ([]Contact, []byte, error) {
@@ -64,7 +75,7 @@ func (k *Kademlia) lookup(ctx context.Context, target KademliaID, kind string, p
 
 	log.Info("lookup_done", "kind", kind, "target", target.Short(), "ok", err == nil,
 		"probes", res.Probes, "failed", res.Failed, "found", len(res.Contacts),
-		"value", res.Value != nil, "ms", time.Since(start).Milliseconds())
+		"hops", res.Hops, "value", res.Value != nil, "ms", time.Since(start).Milliseconds())
 	return res, err
 }
 
@@ -121,10 +132,11 @@ func (k *Kademlia) runLookup(ctx context.Context, log *slog.Logger, sl *shortlis
 				log.Info("probe_ok", "to", r.from.ID.Short(), "value", true)
 				res.Contacts = sl.responded()
 				res.Value, res.From = r.value, r.from
+				res.Hops = sl.hops[r.from.ID]
 				return res, nil // found it: stop (in-flight probes are cancelled)
 			default:
 				sl.state[r.from.ID] = stateResponded
-				sl.add(r.contacts)
+				sl.addFrom(r.contacts, sl.hops[r.from.ID]+1)
 				log.Info("probe_ok", "to", r.from.ID.Short(), "returned", len(r.contacts))
 			}
 		case <-ctx.Done():
@@ -137,6 +149,7 @@ func (k *Kademlia) runLookup(ctx context.Context, log *slog.Logger, sl *shortlis
 	if len(res.Contacts) == 0 {
 		return res, ErrNoContacts
 	}
+	res.Hops = sl.hops[res.Contacts[0].ID]
 	return res, nil
 }
 
@@ -158,20 +171,27 @@ type shortlist struct {
 	k      int
 	order  []Contact // closest to target first
 	state  map[KademliaID]candidateState
+	hops   map[KademliaID]int // see LookupResult.Hops
 }
 
 func newShortlist(target, self KademliaID, k int) *shortlist {
-	return &shortlist{target: target, self: self, k: k, state: make(map[KademliaID]candidateState)}
+	return &shortlist{target: target, self: self, k: k,
+		state: make(map[KademliaID]candidateState), hops: make(map[KademliaID]int)}
 }
 
-// add inserts new candidates (ignoring ourselves and ones already known).
-func (s *shortlist) add(contacts []Contact) {
+// add inserts candidates from our own routing table (one hop away).
+func (s *shortlist) add(contacts []Contact) { s.addFrom(contacts, 1) }
+
+// addFrom inserts new candidates that are the given number of hops away
+// (ignoring ourselves and ones already known).
+func (s *shortlist) addFrom(contacts []Contact, hops int) {
 	added := false
 	for _, c := range contacts {
 		if _, known := s.state[c.ID]; known || c.ID == s.self {
 			continue
 		}
 		s.state[c.ID] = stateUnqueried
+		s.hops[c.ID] = hops
 		s.order = append(s.order, c)
 		added = true
 	}

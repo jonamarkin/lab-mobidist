@@ -89,6 +89,14 @@ func (n *SimNetwork) SetLossRate(p float64) {
 	n.cfg.LossRate = p
 }
 
+// SetLatency changes the delay range for packets sent from now on (e.g.
+// build a network quickly without delay, then measure with delay).
+func (n *SimNetwork) SetLatency(min, max time.Duration) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cfg.MinLatency, n.cfg.MaxLatency = min, max
+}
+
 // Stats returns a snapshot of the packet counters.
 func (n *SimNetwork) Stats() SimStats {
 	return SimStats{

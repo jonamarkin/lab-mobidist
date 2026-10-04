@@ -116,6 +116,17 @@ func TestSimSetLossRate(t *testing.T) {
 	}
 }
 
+func TestSimSetLatency(t *testing.T) {
+	n := NewSimNetwork(SimConfig{})
+	a, b := listen(t, n, 1), listen(t, n, 2)
+	n.SetLatency(30*time.Millisecond, 30*time.Millisecond)
+	start := time.Now()
+	a.Send(b.LocalAddr(), []byte("x"))
+	if _, ok := recvWithin(b, time.Second); !ok || time.Since(start) < 30*time.Millisecond {
+		t.Errorf("latency not applied (%v)", time.Since(start))
+	}
+}
+
 func TestSimLatency(t *testing.T) {
 	const minLat = 20 * time.Millisecond
 	n := NewSimNetwork(SimConfig{MinLatency: minLat, MaxLatency: 30 * time.Millisecond})
