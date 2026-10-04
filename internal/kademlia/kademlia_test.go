@@ -282,6 +282,18 @@ func (b *syncBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
+func (b *syncBuffer) reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
+func (b *syncBuffer) bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return bytes.Clone(b.buf.Bytes())
+}
+
 // The log is machine-readable (one JSON object per line), records every
 // probe, and shows that no more than alpha probes are ever in flight.
 func TestLookupLogging(t *testing.T) {
@@ -330,4 +342,89 @@ func TestLookupLogging(t *testing.T) {
 	if maxInFlight > alpha {
 		t.Errorf("%d probes in flight at once, alpha = %d", maxInFlight, alpha)
 	}
+}
+
+func TestRoutingTableChoice(t *testing.T) {
+	sim := network.NewSimNetwork(network.SimConfig{})
+	cfg := testConfig(3)
+	k, _ := NewKademlia(sim, testAddr(0), cfg)
+	defer k.Close()
+	if _, ok := k.RoutingTable().(*BucketRoutingTable); !ok {
+		t.Errorf("default table is %T, want *BucketRoutingTable", k.RoutingTable())
+	}
+	cfg.FlatRoutingTable = true
+	f, _ := NewKademlia(sim, testAddr(1), cfg)
+	defer f.Close()
+	if _, ok := f.RoutingTable().(*FlatRoutingTable); !ok {
+		t.Errorf("flat table is %T", f.RoutingTable())
+	}
+}
+
+// pingOldest: a live node is kept, a dead one (timeout) is evicted.
+func TestPingOldest(t *testing.T) {
+	sim := network.NewSimNetwork(network.SimConfig{})
+	nodes := newTestNetwork(t, sim, 3, testConfig(3))
+	nodes[2].Close()
+	if !nodes[0].pingOldest(nodes[1].Me()) {
+		t.Error("live node reported dead")
+	}
+	if nodes[0].pingOldest(nodes[2].Me()) {
+		t.Error("dead node reported alive")
+	}
+}
+
+// With a short RefreshInterval, idle nodes refresh their buckets in the
+// background, and Close stops the refresh loop.
+func TestPeriodicRefresh(t *testing.T) {
+	var logs syncBuffer
+	cfg := testConfig(3)
+	cfg.RefreshInterval = 50 * time.Millisecond
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	sim := network.NewSimNetwork(network.SimConfig{})
+	newTestNetwork(t, sim, 10, cfg)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !bytes.Contains(logs.bytes(), []byte(`"reason":"periodic"`)) {
+		if time.Now().After(deadline) {
+			t.Fatal("no periodic refresh logged")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A lookup marks its bucket as recently used: right after a refresh pass,
+// a second pass has nothing to do. Once no lookups have happened for
+// RefreshInterval, every bucket from the closest neighbor's up is stale.
+func TestRefreshSkipsRecentlyUsedBuckets(t *testing.T) {
+	var logs syncBuffer
+	cfg := testConfig(3)
+	cfg.RefreshInterval = time.Hour // the loop never fires during the test
+	sim := network.NewSimNetwork(network.SimConfig{})
+	nodes := newTestNetwork(t, sim, 10, cfg)
+
+	k := nodes[5]
+	k.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	k.refreshStale() // buckets nodes 6-9 moved into after k joined are stale
+	logs.reset()
+	k.refreshStale()
+	if bytes.Contains(logs.bytes(), []byte(`"msg":"refresh"`)) {
+		t.Errorf("refreshed recently used buckets:\n%s", logs.bytes())
+	}
+
+	k.mu.Lock()
+	k.lastLookup = [IDBits]time.Time{} // pretend no lookups ever happened
+	k.mu.Unlock()
+	k.refreshStale()
+	closest := k.RoutingTable().FindClosestContacts(k.Me().ID, 1)[0]
+	want := IDBits - BucketIndex(k.Me().ID, closest.ID)
+	if got := bytes.Count(logs.bytes(), []byte(`"reason":"periodic"`)); got != want {
+		t.Errorf("refreshed %d buckets, want %d", got, want)
+	}
+}
+
+func TestRefreshStaleWithEmptyTable(t *testing.T) {
+	sim := network.NewSimNetwork(network.SimConfig{})
+	k, _ := NewKademlia(sim, testAddr(0), testConfig(3))
+	defer k.Close()
+	k.refreshStale() // nothing to do, must not panic
 }

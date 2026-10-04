@@ -28,15 +28,25 @@ var ErrNoContacts = errors.New("kademlia: no live contacts")
 
 // Config holds the protocol parameters.
 type Config struct {
-	K      int        // replication factor / bucket size (spec default 10)
-	Alpha  int        // lookup parallelism (spec default 3)
-	RPC    rpc.Config // timeout/retry policy
+	K     int        // replication factor / bucket size (spec default 10)
+	Alpha int        // lookup parallelism (spec default 3)
+	RPC   rpc.Config // timeout/retry policy
+
+	// RefreshInterval: a bucket with no lookup into its range for this
+	// long is refreshed (paper: one hour). 0 disables periodic refresh.
+	RefreshInterval time.Duration
+
+	// FlatRoutingTable selects the simplified table that keeps every
+	// contact, instead of k-buckets (for comparisons only).
+	FlatRoutingTable bool
+
 	Logger *slog.Logger
 }
 
-// DefaultConfig returns the spec's defaults: k = 10, alpha = 3.
+// DefaultConfig returns the spec's and paper's defaults: k = 10,
+// alpha = 3, refresh after one hour.
 func DefaultConfig() Config {
-	return Config{K: 10, Alpha: 3, RPC: rpc.DefaultConfig()}
+	return Config{K: 10, Alpha: 3, RPC: rpc.DefaultConfig(), RefreshInterval: time.Hour}
 }
 
 // Kademlia is one node: its contact, routing table, and RPC endpoint.
@@ -49,8 +59,14 @@ type Kademlia struct {
 
 	lookups atomic.Int64 // numbers lookups in the log
 
-	rngMu sync.Mutex // guards rng
-	rng   *rand.Rand // seeded from our ID, so runs are repeatable
+	mu         sync.Mutex        // guards rng and lastLookup
+	rng        *rand.Rand        // seeded from our ID, so runs are repeatable
+	lastLookup [IDBits]time.Time // last lookup into each bucket's range
+
+	// ctx is cancelled by Close, stopping background work (refresh).
+	ctx    context.Context
+	cancel context.CancelFunc
+	bg     sync.WaitGroup
 }
 
 // FIND_NODE messages. Contacts travel as addresses only: the receiver
@@ -77,11 +93,19 @@ func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia
 	k := &Kademlia{
 		me:  me,
 		cfg: cfg,
-		rt:  NewFlatRoutingTable(me),
 		log: logger.With("node", me.ID.Short()),
 		rng: rand.New(rand.NewPCG(binary.BigEndian.Uint64(me.ID[:8]), binary.BigEndian.Uint64(me.ID[8:16]))),
 	}
+	if cfg.FlatRoutingTable {
+		k.rt = NewFlatRoutingTable(me)
+	} else {
+		k.rt = NewBucketRoutingTable(me, cfg.K, k.pingOldest)
+	}
+	k.ctx, k.cancel = context.WithCancel(context.Background())
 	k.rpc = rpc.NewEndpoint(conn, k.handle, cfg.RPC)
+	if cfg.RefreshInterval > 0 {
+		k.bg.Go(k.refreshLoop)
+	}
 	return k, nil
 }
 
@@ -91,8 +115,12 @@ func (k *Kademlia) Me() Contact { return k.me }
 // RoutingTable returns the node's routing table.
 func (k *Kademlia) RoutingTable() RoutingTable { return k.rt }
 
-// Close stops the node.
-func (k *Kademlia) Close() error { return k.rpc.Close() }
+// Close stops background work and the node's endpoint.
+func (k *Kademlia) Close() error {
+	k.cancel()
+	k.bg.Wait()
+	return k.rpc.Close()
+}
 
 // Ping sends PING to addr and returns the round-trip time (including any
 // retransmissions).
@@ -119,19 +147,75 @@ func (k *Kademlia) Join(ctx context.Context, bootstrap netip.AddrPort) error {
 		return fmt.Errorf("kademlia: join: %w", err)
 	}
 	for i := BucketIndex(k.me.ID, res.Contacts[0].ID) + 1; i < IDBits; i++ {
-		k.RefreshBucket(ctx, i)
+		k.refreshBucket(ctx, i, "join")
 	}
 	return nil
 }
 
-// RefreshBucket looks up a random ID in bucket i (paper §2.3). Every node
+// refreshBucket looks up a random ID in bucket i (paper §2.3). Every node
 // that answers is added to our routing table, and learns about us.
-func (k *Kademlia) RefreshBucket(ctx context.Context, i int) {
-	k.rngMu.Lock()
+func (k *Kademlia) refreshBucket(ctx context.Context, i int, reason string) {
+	k.mu.Lock()
 	target := RandomIDInBucket(k.me.ID, i, k.rng)
-	k.rngMu.Unlock()
-	k.log.Info("refresh", "bucket", i)
+	k.mu.Unlock()
+	k.log.Info("refresh", "bucket", i, "reason", reason)
 	k.LookupContact(ctx, target)
+}
+
+// touchBucket records a lookup into the range of the bucket that target
+// falls in, so periodic refresh can skip buckets that see traffic anyway.
+func (k *Kademlia) touchBucket(target KademliaID) {
+	if i := BucketIndex(k.me.ID, target); i >= 0 {
+		k.mu.Lock()
+		k.lastLookup[i] = time.Now()
+		k.mu.Unlock()
+	}
+}
+
+// refreshLoop periodically refreshes stale buckets until Close.
+func (k *Kademlia) refreshLoop() {
+	ticker := time.NewTicker(k.cfg.RefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-k.ctx.Done():
+			return
+		case <-ticker.C:
+			k.refreshStale()
+		}
+	}
+}
+
+// refreshStale refreshes every bucket from our closest neighbor's bucket
+// up to the farthest one that has had no lookup within RefreshInterval.
+// (Lower buckets cover ID ranges too small to contain any node.)
+func (k *Kademlia) refreshStale() {
+	closest := k.rt.FindClosestContacts(k.me.ID, 1)
+	if len(closest) == 0 {
+		return
+	}
+	for i := BucketIndex(k.me.ID, closest[0].ID); i < IDBits && k.ctx.Err() == nil; i++ {
+		k.mu.Lock()
+		stale := time.Since(k.lastLookup[i]) >= k.cfg.RefreshInterval
+		k.mu.Unlock()
+		if stale {
+			k.refreshBucket(k.ctx, i, "periodic")
+		}
+	}
+}
+
+// pingOldest is the routing table's Pinger: is the least recently seen
+// contact of a full bucket still alive? Only a timeout counts as dead
+// (not, e.g., our own endpoint closing).
+func (k *Kademlia) pingOldest(c Contact) bool {
+	err := k.rpc.Call(k.ctx, c.Address, MethodPing, nil, nil)
+	alive := !errors.Is(err, rpc.ErrTimeout)
+	if alive {
+		k.log.Info("evict_check", "contact", c.ID.Short(), "result", "kept")
+	} else {
+		k.log.Info("evict_check", "contact", c.ID.Short(), "result", "evicted")
+	}
+	return alive
 }
 
 // call makes an RPC to c and maintains the routing table (paper §2.2): a

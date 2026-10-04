@@ -23,6 +23,7 @@ type LookupResult struct {
 func (k *Kademlia) LookupContact(ctx context.Context, target KademliaID) (LookupResult, error) {
 	log := k.log.With("lookup", k.lookups.Add(1))
 	start := time.Now()
+	k.touchBucket(target)
 
 	sl := newShortlist(target, k.me.ID, k.cfg.K)
 	sl.add(k.rt.FindClosestContacts(target, k.cfg.K))
