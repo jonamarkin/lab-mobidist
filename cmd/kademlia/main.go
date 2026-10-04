@@ -28,11 +28,12 @@ func main() {
 	timeout := flag.Duration("timeout", def.RPC.Timeout, "RPC timeout per attempt")
 	retries := flag.Int("retries", def.RPC.Retries, "RPC retransmissions after the first attempt")
 	refresh := flag.Duration("refresh", def.RefreshInterval, "bucket refresh interval (0 disables)")
+	replicate := flag.Duration("replicate", def.ReplicateInterval, "replication interval (0 disables)")
 	logPath := flag.String("log", "kademlia.log", `file for JSON event logs ("-" for stderr)`)
 	flag.Parse()
 
 	if err := run(*addrFlag, *bootstrap, *logPath, kademlia.Config{
-		K: *k, Alpha: *alpha, RefreshInterval: *refresh,
+		K: *k, Alpha: *alpha, RefreshInterval: *refresh, ReplicateInterval: *replicate,
 		RPC: rpc.Config{Timeout: *timeout, Retries: *retries},
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

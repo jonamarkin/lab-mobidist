@@ -1,6 +1,8 @@
 # A 50-node Kademlia network: one bootstrap node plus 49 nodes that join
 # through it. Each container gets its own IP on the "kademlia" network and
-# listens on UDP port 4000. Start with `make up`, stop with `make down`.
+# listens on port 4000 (UDP for RPCs, TCP for value transfers).
+# Start with `make up`, stop with `make down`. For demos, shorten the
+# replication interval: `REPLICATE=20s make up` (default 1h, as in the paper).
 name: kademlia
 
 services:
@@ -8,7 +10,7 @@ services:
     build: .
     image: kadlab
     hostname: bootstrap
-    command: ["-addr", ":4000"]
+    command: ["-addr", ":4000", "-replicate", "${REPLICATE:-1h}"]
     stdin_open: true # keep the shell's input open, so `docker attach` works
     tty: true
     networks: [kademlia]
@@ -16,7 +18,7 @@ services:
   node:
     image: kadlab
     depends_on: [bootstrap]
-    command: ["-addr", ":4000", "-bootstrap", "bootstrap:4000"]
+    command: ["-addr", ":4000", "-bootstrap", "bootstrap:4000", "-replicate", "${REPLICATE:-1h}"]
     stdin_open: true
     tty: true
     deploy:

@@ -9,5 +9,5 @@ RUN CGO_ENABLED=0 go build -trimpath -o /kademlia ./cmd/kademlia
 FROM alpine:3.22
 COPY --from=build /kademlia /usr/local/bin/kademlia
 WORKDIR /data
-EXPOSE 4000/udp
+EXPOSE 4000/udp 4000/tcp
 ENTRYPOINT ["kademlia"]
