@@ -1,4 +1,4 @@
-.PHONY: test race cover build experiments up down ps joined attach demo store-demo
+.PHONY: test race cover build experiments analyze up down ps joined attach demo store-demo
 
 # --- Go ---------------------------------------------------------------
 
@@ -16,10 +16,14 @@ build:
 	go build -o bin/kademlia ./cmd/kademlia
 
 # Run both experiments (5 seeds each) on the simulated network, then
-# analyze the event log: tables to stdout, CSV (and PNG plots if
-# matplotlib is installed) in results/.
+# analyze the event log: tables to stdout, CSV files in results/ (plot them
+# with any tool).
 experiments:
 	go run ./cmd/experiment -out results/experiments.jsonl
+	python3 scripts/analyze.py results/experiments.jsonl
+
+# Re-analyze an existing log without re-running the experiments.
+analyze:
 	python3 scripts/analyze.py results/experiments.jsonl
 
 # --- Docker: 50-node network -------------------------------------------

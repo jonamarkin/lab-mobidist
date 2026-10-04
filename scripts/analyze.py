@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Analyze the JSON event log written by `go run ./cmd/experiment`.
 
-Uses only the standard library. Writes CSV tables to results/ and, if
-matplotlib is installed, plots as PNG files.
+Uses only the standard library. Prints summary tables and writes them as
+CSV files to results/ (results/exp1_probes.csv, results/exp2_loss.csv),
+ready to plot with any tool.
 
 Statistics: for each configuration we compute one mean per seed (one
 network), then report the mean and the variance/standard deviation of those
@@ -130,49 +131,12 @@ def write_csv(path, rows):
     print(f"wrote {path}")
 
 
-def plot(exp1, exp2):
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("\n(matplotlib not installed: skipping plots; the CSV files have all the data)")
-        return
-    if exp1:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ns = [r["n"] for r in exp1]
-        ax.errorbar(ns, [r["probes_mean"] for r in exp1], yerr=[r["probes_sd"] for r in exp1], marker="o", capsize=3, label="probes per lookup")
-        ax.errorbar(ns, [r["hops_mean"] for r in exp1], yerr=[r["hops_sd"] for r in exp1], marker="s", capsize=3, label="hops per lookup")
-        ax.plot(ns, [r["log2n"] for r in exp1], "k--", label="log2 N")
-        ax.plot(ns, [r["log2n_over_log2k"] for r in exp1], "k:", label="log2 N / log2 k")
-        ax.set_xscale("log", base=2)
-        ax.set_xlabel("network size N")
-        ax.set_ylabel("count")
-        ax.set_title("Lookup cost vs network size (mean ± sd over seeds)")
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig("results/exp1_probes.png", dpi=150)
-        print("wrote results/exp1_probes.png")
-    if exp2:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ps = [r["loss"] for r in exp2]
-        ax.errorbar(ps, [100 * r["success_mean"] for r in exp2], yerr=[100 * r["success_sd"] for r in exp2], marker="o", capsize=3, label="lookup success")
-        ax.plot(ps, [100 * r["rpc_success_model"] for r in exp2], "k--", label="single RPC success (model)")
-        ax.set_xlabel("packet loss probability")
-        ax.set_ylabel("success rate (%)")
-        ax.set_ylim(0, 105)
-        ax.set_title("Value lookup success vs packet loss (mean ± sd over seeds)")
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig("results/exp2_loss.png", dpi=150)
-        print("wrote results/exp2_loss.png")
-
-
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "results/experiments.jsonl"
     done, probes = load(path)
     ok = cross_check(done, probes)
-    plot(experiment1(done), experiment2(done))
+    experiment1(done)
+    experiment2(done)
     if not ok:
         sys.exit("cross-check failed: the log is inconsistent")
 
