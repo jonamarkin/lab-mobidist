@@ -89,6 +89,9 @@ func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	// Use the address the endpoint actually got (e.g. the port the OS
+	// picked for port 0): the ID must match what other nodes see.
+	addr = conn.LocalAddr()
 	me := NewContact(NewNodeID(addr), addr)
 	k := &Kademlia{
 		me:  me,
@@ -108,6 +111,9 @@ func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia
 	}
 	return k, nil
 }
+
+// Config returns the node's parameters.
+func (k *Kademlia) Config() Config { return k.cfg }
 
 // Me returns this node's own contact.
 func (k *Kademlia) Me() Contact { return k.me }

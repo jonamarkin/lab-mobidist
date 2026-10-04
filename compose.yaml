@@ -1,0 +1,28 @@
+# A 50-node Kademlia network: one bootstrap node plus 49 nodes that join
+# through it. Each container gets its own IP on the "kademlia" network and
+# listens on UDP port 4000. Start with `make up`, stop with `make down`.
+name: kademlia
+
+services:
+  bootstrap:
+    build: .
+    image: kadlab
+    hostname: bootstrap
+    command: ["-addr", ":4000"]
+    stdin_open: true # keep the shell's input open, so `docker attach` works
+    tty: true
+    networks: [kademlia]
+
+  node:
+    image: kadlab
+    depends_on: [bootstrap]
+    command: ["-addr", ":4000", "-bootstrap", "bootstrap:4000"]
+    stdin_open: true
+    tty: true
+    deploy:
+      replicas: 49
+    restart: on-failure # safety net if a node fails to start
+    networks: [kademlia]
+
+networks:
+  kademlia: {}

@@ -428,3 +428,33 @@ func TestRefreshStaleWithEmptyTable(t *testing.T) {
 	defer k.Close()
 	k.refreshStale() // nothing to do, must not panic
 }
+
+// The same protocol over real UDP sockets on the loopback interface.
+func TestLookupOverUDP(t *testing.T) {
+	cfg := testConfig(3)
+	var nodes []*Kademlia
+	for i := range 8 {
+		k, err := NewKademlia(network.UDPNetwork{}, netip.MustParseAddrPort("127.0.0.1:0"), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { k.Close() })
+		if i > 0 {
+			if err := k.Join(context.Background(), nodes[0].Me().Address); err != nil {
+				t.Fatal(err)
+			}
+		}
+		nodes = append(nodes, k)
+	}
+	if nodes[3].Config().K != cfg.K {
+		t.Error("Config() does not return the node's config")
+	}
+	target := nodes[7].Me().ID
+	res, err := nodes[2].LookupContact(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := oracle(nodes, nodes[2].Me().ID, target, 10); !slices.Equal(res.Contacts, want) {
+		t.Errorf("got  %v\nwant %v", res.Contacts, want)
+	}
+}
