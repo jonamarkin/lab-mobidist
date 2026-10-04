@@ -2,48 +2,83 @@ package kademlia
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
 
-// LookupResult is the outcome of an iterative node lookup.
+// ErrNotFound is returned by LookupData when no node has the value.
+var ErrNotFound = errors.New("kademlia: value not found")
+
+// LookupResult is the outcome of an iterative lookup.
 type LookupResult struct {
 	Contacts []Contact // up to k closest contacts that responded, closest first
-	Probes   int       // FIND_NODE RPCs started (each may retransmit internally)
+	Probes   int       // FIND_NODE/FIND_VALUE RPCs started (each may retransmit internally)
 	Failed   int       // probes that got no response
+
+	Value []byte  // LookupData only: the value, verified against its key
+	From  Contact // LookupData only: the node the value came from
 }
+
+// probeFunc asks contact c about the lookup's target. It returns the
+// closer contacts c knows, or (value lookups only) the verified value.
+type probeFunc func(ctx context.Context, c Contact) (contacts []Contact, value []byte, err error)
 
 // LookupContact finds the k nodes closest to target (paper §2.3) using
 // bounded parallelism: at most alpha probes are in flight, and a new one
 // starts as soon as any probe finishes.
-//
-// A single coordinator goroutine (this one) owns the shortlist. Probe
-// goroutines only send their results back over a channel, so the
-// shortlist needs no lock.
 func (k *Kademlia) LookupContact(ctx context.Context, target KademliaID) (LookupResult, error) {
+	return k.lookup(ctx, target, "node", func(ctx context.Context, c Contact) ([]Contact, []byte, error) {
+		contacts, err := k.findNode(ctx, c, target)
+		return contacts, nil, err
+	})
+}
+
+// LookupData finds the value stored under key (paper §2.3, FIND_VALUE):
+// the same iterative lookup, but it stops as soon as some node delivers
+// a value whose hash matches the key.
+func (k *Kademlia) LookupData(ctx context.Context, key KademliaID) (LookupResult, error) {
+	if value, ok := k.store.Get(key); ok {
+		return LookupResult{Value: value, From: k.me}, nil
+	}
+	res, err := k.lookup(ctx, key, "value", func(ctx context.Context, c Contact) ([]Contact, []byte, error) {
+		return k.findValue(ctx, c, key)
+	})
+	if err == nil && res.Value == nil {
+		err = ErrNotFound
+	}
+	return res, err
+}
+
+// lookup runs one iterative lookup and logs its start and outcome.
+func (k *Kademlia) lookup(ctx context.Context, target KademliaID, kind string, probe probeFunc) (LookupResult, error) {
 	log := k.log.With("lookup", k.lookups.Add(1))
 	start := time.Now()
 	k.touchBucket(target)
 
 	sl := newShortlist(target, k.me.ID, k.cfg.K)
 	sl.add(k.rt.FindClosestContacts(target, k.cfg.K))
-	log.Info("lookup_start", "target", target.Short(), "known", len(sl.order))
+	log.Info("lookup_start", "kind", kind, "target", target.Short(), "known", len(sl.order))
 
-	res, err := k.runLookup(ctx, log, sl)
+	res, err := k.runLookup(ctx, log, sl, probe)
 
-	log.Info("lookup_done", "target", target.Short(), "ok", err == nil,
+	log.Info("lookup_done", "kind", kind, "target", target.Short(), "ok", err == nil,
 		"probes", res.Probes, "failed", res.Failed, "found", len(res.Contacts),
-		"ms", time.Since(start).Milliseconds())
+		"value", res.Value != nil, "ms", time.Since(start).Milliseconds())
 	return res, err
 }
 
 type probeResult struct {
 	from     Contact
 	contacts []Contact
+	value    []byte
 	err      error
 }
 
-func (k *Kademlia) runLookup(ctx context.Context, log *slog.Logger, sl *shortlist) (LookupResult, error) {
+// runLookup is the coordinator. A single goroutine (this one) owns the
+// shortlist; probe goroutines only send their results back over a
+// channel, so the shortlist needs no lock.
+func (k *Kademlia) runLookup(ctx context.Context, log *slog.Logger, sl *shortlist, probe probeFunc) (LookupResult, error) {
 	var res LookupResult
 
 	// Cancelling stops probes still in flight when the lookup is done.
@@ -66,8 +101,8 @@ func (k *Kademlia) runLookup(ctx context.Context, log *slog.Logger, sl *shortlis
 			res.Probes++
 			log.Info("probe", "to", c.ID.Short(), "addr", c.Address.String())
 			go func() {
-				contacts, err := k.findNode(ctx, c, sl.target)
-				results <- probeResult{c, contacts, err}
+				contacts, value, err := probe(ctx, c)
+				results <- probeResult{c, contacts, value, err}
 			}()
 		}
 
@@ -76,11 +111,18 @@ func (k *Kademlia) runLookup(ctx context.Context, log *slog.Logger, sl *shortlis
 		select {
 		case r := <-results:
 			inFlight--
-			if r.err != nil {
+			switch {
+			case r.err != nil:
 				res.Failed++
 				sl.state[r.from.ID] = stateFailed
 				log.Info("probe_failed", "to", r.from.ID.Short(), "err", r.err.Error())
-			} else {
+			case r.value != nil:
+				sl.state[r.from.ID] = stateResponded
+				log.Info("probe_ok", "to", r.from.ID.Short(), "value", true)
+				res.Contacts = sl.responded()
+				res.Value, res.From = r.value, r.from
+				return res, nil // found it: stop (in-flight probes are cancelled)
+			default:
 				sl.state[r.from.ID] = stateResponded
 				sl.add(r.contacts)
 				log.Info("probe_ok", "to", r.from.ID.Short(), "returned", len(r.contacts))

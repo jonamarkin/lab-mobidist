@@ -1,12 +1,17 @@
-// Package network hides how nodes exchange packets. The Kademlia code only
-// sees the Network and PacketConn interfaces, so the same code runs on the
-// in-process simulated network (tests, 1000+ node experiments) and on real
-// UDP (containers).
+// Package network hides how nodes communicate. The Kademlia code only sees
+// the Network interface, so the same code runs on the in-process simulated
+// network (tests, 1000+ node experiments) and on real sockets (containers).
+//
+// There are two planes: the control plane carries small RPC messages as
+// unreliable packets (UDP), and the data plane carries values over
+// reliable streams (TCP), which have no size limit.
 package network
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 )
 
@@ -18,6 +23,7 @@ const MaxPacketSize = 8192
 var (
 	ErrClosed    = errors.New("network: connection closed")
 	ErrAddrInUse = errors.New("network: address already in use")
+	ErrRefused   = errors.New("network: connection refused")
 	ErrTooLarge  = fmt.Errorf("network: packet larger than %d bytes", MaxPacketSize)
 )
 
@@ -47,7 +53,15 @@ type PacketConn interface {
 	Close() error
 }
 
-// Network creates endpoints.
+// Network creates endpoints for both planes.
 type Network interface {
+	// ListenPacket opens a control-plane (packet) endpoint.
 	ListenPacket(addr netip.AddrPort) (PacketConn, error)
+
+	// ListenStream accepts data-plane (stream) connections on addr.
+	ListenStream(addr netip.AddrPort) (net.Listener, error)
+
+	// DialStream opens a data-plane connection to addr. Unlike packets,
+	// a failed connection attempt is reported (as with TCP).
+	DialStream(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
 }

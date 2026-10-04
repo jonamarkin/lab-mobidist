@@ -2,12 +2,14 @@ package network
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"net/netip"
 )
 
-// UDPNetwork is the real network: each endpoint is a UDP socket.
+// UDPNetwork is the real network: packets are UDP datagrams and streams
+// are TCP connections.
 type UDPNetwork struct{}
 
 var _ Network = UDPNetwork{}
@@ -65,4 +67,15 @@ func (c *udpConn) Close() error { return c.conn.Close() }
 // unmap turns an IPv4-mapped IPv6 address (::ffff:a.b.c.d) into plain IPv4.
 func unmap(a netip.AddrPort) netip.AddrPort {
 	return netip.AddrPortFrom(a.Addr().Unmap(), a.Port())
+}
+
+// ListenStream listens for TCP connections on addr.
+func (UDPNetwork) ListenStream(addr netip.AddrPort) (net.Listener, error) {
+	return net.Listen("tcp", addr.String())
+}
+
+// DialStream opens a TCP connection to addr.
+func (UDPNetwork) DialStream(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", addr.String())
 }

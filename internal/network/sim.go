@@ -40,9 +40,10 @@ type SimStats struct {
 type SimNetwork struct {
 	cfg SimConfig
 
-	mu    sync.Mutex // guards conns and rng
-	conns map[netip.AddrPort]*simConn
-	rng   *rand.Rand
+	mu      sync.Mutex // guards conns, streams, and rng
+	conns   map[netip.AddrPort]*simConn
+	streams map[netip.AddrPort]*simListener
+	rng     *rand.Rand
 
 	sent, lost, undeliverable, delivered atomic.Int64
 }
@@ -55,9 +56,10 @@ func NewSimNetwork(cfg SimConfig) *SimNetwork {
 		cfg.QueueSize = 1024
 	}
 	return &SimNetwork{
-		cfg:   cfg,
-		conns: make(map[netip.AddrPort]*simConn),
-		rng:   rand.New(rand.NewPCG(cfg.Seed, 0)),
+		cfg:     cfg,
+		conns:   make(map[netip.AddrPort]*simConn),
+		streams: make(map[netip.AddrPort]*simListener),
+		rng:     rand.New(rand.NewPCG(cfg.Seed, 0)),
 	}
 }
 

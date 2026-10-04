@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -30,9 +31,13 @@ func NewShell(node *kademlia.Kademlia, out io.Writer) *Shell {
 
 const help = `commands:
   ping IP:PORT | HOST:PORT | ID-PREFIX   ping a node, print the round-trip time
+  put FILENAME                           store a file's contents; prints the key
+  puttext TEXT...                        store the given text; prints the key
+  get KEY [FILENAME]                     fetch a value; save it to FILENAME or print it
   lookup ID-PREFIX                       find the k nodes closest to an ID
                                          (a prefix is padded with zeros)
   show rt                                print the routing table
+  show ds                                print the local data store
   id                                     print this node's ID and address
   help                                   print this help
   exit                                   terminate the node
@@ -74,6 +79,12 @@ func (s *Shell) Execute(line string) (exit bool) {
 		fmt.Fprintf(s.out, "node %s at %s\nfull ID %s\n", me.ID.Short(), me.Address, me.ID)
 	case "ping":
 		err = s.ping(ctx, args)
+	case "put":
+		err = s.put(ctx, args)
+	case "puttext":
+		err = s.store(ctx, []byte(strings.Join(args, " ")))
+	case "get":
+		err = s.get(ctx, args)
 	case "lookup":
 		err = s.lookup(ctx, args)
 	case "show":
@@ -155,10 +166,87 @@ func (s *Shell) lookup(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (s *Shell) show(args []string) error {
-	if len(args) != 1 || args[0] != "rt" {
-		return errors.New("usage: show rt")
+func (s *Shell) put(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: put FILENAME")
 	}
+	value, err := os.ReadFile(args[0])
+	if err != nil {
+		return err
+	}
+	return s.store(ctx, value)
+}
+
+func (s *Shell) store(ctx context.Context, value []byte) error {
+	res, err := s.node.Store(ctx, value)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(s.out, "stored %d bytes on %d nodes (%d failed)\nkey %s\n", len(value), len(res.StoredAt), res.Failed, res.Key)
+	return nil
+}
+
+func (s *Shell) get(ctx context.Context, args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return errors.New("usage: get KEY [FILENAME]")
+	}
+	key, err := kademlia.NewKademliaID(strings.ToLower(args[0]))
+	if err != nil {
+		return err
+	}
+	res, err := s.node.LookupData(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(args) == 2 {
+		if err := os.WriteFile(args[1], res.Value, 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(s.out, "saved %d bytes to %s\n", len(res.Value), args[1])
+	} else {
+		fmt.Fprintf(s.out, "%s\n", res.Value)
+	}
+	fmt.Fprintf(s.out, "received from %s\n", res.From)
+	return nil
+}
+
+func (s *Shell) show(args []string) error {
+	switch {
+	case len(args) == 1 && args[0] == "rt":
+		return s.showRT()
+	case len(args) == 1 && args[0] == "ds":
+		return s.showDS()
+	}
+	return errors.New("usage: show rt | show ds")
+}
+
+func (s *Shell) showDS() error {
+	ds := s.node.DataStore()
+	keys := ds.Keys()
+	fmt.Fprintf(s.out, "data store of %s: %d values\n", s.node.Me(), len(keys))
+	for _, key := range keys {
+		value, _ := ds.Get(key)
+		fmt.Fprintf(s.out, "  %s  %8d bytes  %s\n", key.Short(), len(value), preview(value))
+	}
+	return nil
+}
+
+// preview shows the start of a value if it is printable text.
+func preview(value []byte) string {
+	const max = 32
+	text := string(value[:min(len(value), max)])
+	for _, r := range text {
+		if r < ' ' || r == 0x7f || r == '\uFFFD' {
+			return "(binary)"
+		}
+	}
+	if len(value) > max {
+		text += "…"
+	}
+	return fmt.Sprintf("%q", text)
+}
+
+func (s *Shell) showRT() error {
 	me := s.node.Me()
 	rt, ok := s.node.RoutingTable().(*kademlia.BucketRoutingTable)
 	if !ok {

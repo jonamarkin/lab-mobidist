@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -19,8 +20,9 @@ import (
 
 // RPC method names on the wire.
 const (
-	MethodPing     = "PING"
-	MethodFindNode = "FIND_NODE"
+	MethodPing      = "PING"
+	MethodFindNode  = "FIND_NODE"
+	MethodFindValue = "FIND_VALUE"
 )
 
 // ErrNoContacts is returned by a lookup that has no live contact to ask.
@@ -40,22 +42,35 @@ type Config struct {
 	// contact, instead of k-buckets (for comparisons only).
 	FlatRoutingTable bool
 
+	// TransferTimeout bounds one data-plane transfer (STORE or FETCH).
+	TransferTimeout time.Duration
+
+	// ReplicateInterval: each node republishes every value it holds that
+	// nobody has stored or republished within this interval (paper: one
+	// hour). 0 disables replication.
+	ReplicateInterval time.Duration
+
 	Logger *slog.Logger
 }
 
 // DefaultConfig returns the spec's and paper's defaults: k = 10,
-// alpha = 3, refresh after one hour.
+// alpha = 3, bucket refresh and replication every hour.
 func DefaultConfig() Config {
-	return Config{K: 10, Alpha: 3, RPC: rpc.DefaultConfig(), RefreshInterval: time.Hour}
+	return Config{K: 10, Alpha: 3, RPC: rpc.DefaultConfig(), RefreshInterval: time.Hour,
+		TransferTimeout: 30 * time.Second, ReplicateInterval: time.Hour}
 }
 
-// Kademlia is one node: its contact, routing table, and RPC endpoint.
+// Kademlia is one node: its contact, routing table, data store, RPC
+// endpoint (control plane), and stream listener (data plane).
 type Kademlia struct {
-	me  Contact
-	cfg Config
-	rt  RoutingTable
-	rpc *rpc.Endpoint
-	log *slog.Logger
+	me      Contact
+	cfg     Config
+	net     network.Network
+	rt      RoutingTable
+	store   *Store
+	rpc     *rpc.Endpoint
+	streams net.Listener
+	log     *slog.Logger
 
 	lookups atomic.Int64 // numbers lookups in the log
 
@@ -79,6 +94,13 @@ type findNodeReply struct {
 	Contacts []netip.AddrPort `json:"contacts"`
 }
 
+// FIND_VALUE reply: either Found (fetch the value over the data plane) or
+// the closer contacts, as for FIND_NODE. The request is a findNodeArgs.
+type findValueReply struct {
+	Found    bool             `json:"found,omitempty"`
+	Contacts []netip.AddrPort `json:"contacts,omitempty"`
+}
+
 // NewKademlia starts a node listening on addr. Its ID is NewNodeID(addr).
 func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia, error) {
 	conn, err := nw.ListenPacket(addr)
@@ -92,12 +114,25 @@ func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia
 	// Use the address the endpoint actually got (e.g. the port the OS
 	// picked for port 0): the ID must match what other nodes see.
 	addr = conn.LocalAddr()
+	// The data plane listens on the same IP and port, over streams (TCP
+	// and UDP port numbers are separate), so no extra address is needed.
+	streams, err := nw.ListenStream(addr)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if cfg.TransferTimeout <= 0 {
+		cfg.TransferTimeout = DefaultConfig().TransferTimeout
+	}
 	me := NewContact(NewNodeID(addr), addr)
 	k := &Kademlia{
-		me:  me,
-		cfg: cfg,
-		log: logger.With("node", me.ID.Short()),
-		rng: rand.New(rand.NewPCG(binary.BigEndian.Uint64(me.ID[:8]), binary.BigEndian.Uint64(me.ID[8:16]))),
+		me:      me,
+		cfg:     cfg,
+		net:     nw,
+		store:   NewStore(),
+		streams: streams,
+		log:     logger.With("node", me.ID.Short()),
+		rng:     rand.New(rand.NewPCG(binary.BigEndian.Uint64(me.ID[:8]), binary.BigEndian.Uint64(me.ID[8:16]))),
 	}
 	if cfg.FlatRoutingTable {
 		k.rt = NewFlatRoutingTable(me)
@@ -106,8 +141,12 @@ func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia
 	}
 	k.ctx, k.cancel = context.WithCancel(context.Background())
 	k.rpc = rpc.NewEndpoint(conn, k.handle, cfg.RPC)
+	k.bg.Go(k.serveStreams)
 	if cfg.RefreshInterval > 0 {
 		k.bg.Go(k.refreshLoop)
+	}
+	if cfg.ReplicateInterval > 0 {
+		k.bg.Go(k.replicateLoop)
 	}
 	return k, nil
 }
@@ -121,9 +160,13 @@ func (k *Kademlia) Me() Contact { return k.me }
 // RoutingTable returns the node's routing table.
 func (k *Kademlia) RoutingTable() RoutingTable { return k.rt }
 
-// Close stops background work and the node's endpoint.
+// DataStore returns the node's local data store.
+func (k *Kademlia) DataStore() *Store { return k.store }
+
+// Close stops background work and both planes.
 func (k *Kademlia) Close() error {
 	k.cancel()
+	k.streams.Close()
 	k.bg.Wait()
 	return k.rpc.Close()
 }
@@ -245,12 +288,48 @@ func (k *Kademlia) findNode(ctx context.Context, c Contact, target KademliaID) (
 	if err := k.call(ctx, c, MethodFindNode, findNodeArgs{Target: target}, &reply); err != nil {
 		return nil, err
 	}
-	n := min(len(reply.Contacts), k.cfg.K) // don't trust a peer to send at most k
+	return k.toContacts(reply.Contacts), nil
+}
+
+// findValue sends FIND_VALUE(key) to c. If c has the value, it is fetched
+// over the data plane and checked against the key; a node that fails to
+// deliver a valid copy is treated as a node without the value, so the
+// lookup continues with others.
+func (k *Kademlia) findValue(ctx context.Context, c Contact, key KademliaID) ([]Contact, []byte, error) {
+	var reply findValueReply
+	if err := k.call(ctx, c, MethodFindValue, findNodeArgs{Target: key}, &reply); err != nil {
+		return nil, nil, err
+	}
+	if !reply.Found {
+		return k.toContacts(reply.Contacts), nil, nil
+	}
+	value, err := k.fetchFrom(ctx, c, key)
+	if err != nil {
+		k.log.Warn("fetch_failed", "key", key.Short(), "from", c.ID.Short(), "err", err.Error())
+		return nil, nil, nil
+	}
+	return nil, value, nil
+}
+
+// toContacts turns addresses from a reply into contacts (ID = hash of the
+// address), keeping at most k: don't trust a peer to send at most k.
+func (k *Kademlia) toContacts(addrs []netip.AddrPort) []Contact {
+	n := min(len(addrs), k.cfg.K)
 	contacts := make([]Contact, n)
-	for i, addr := range reply.Contacts[:n] {
+	for i, addr := range addrs[:n] {
 		contacts[i] = NewContact(NewNodeID(addr), addr)
 	}
-	return contacts, nil
+	return contacts
+}
+
+// closestAddrs returns the addresses of our k contacts closest to target.
+func (k *Kademlia) closestAddrs(target KademliaID) []netip.AddrPort {
+	closest := k.rt.FindClosestContacts(target, k.cfg.K)
+	addrs := make([]netip.AddrPort, len(closest))
+	for i, c := range closest {
+		addrs[i] = c.Address
+	}
+	return addrs
 }
 
 // handle serves incoming RPCs. Each request also tells us its sender is
@@ -266,12 +345,16 @@ func (k *Kademlia) handle(from netip.AddrPort, method string, body json.RawMessa
 		if err := json.Unmarshal(body, &args); err != nil {
 			return nil, fmt.Errorf("bad %s args: %w", method, err)
 		}
-		closest := k.rt.FindClosestContacts(args.Target, k.cfg.K)
-		addrs := make([]netip.AddrPort, len(closest))
-		for i, c := range closest {
-			addrs[i] = c.Address
+		return findNodeReply{Contacts: k.closestAddrs(args.Target)}, nil
+	case MethodFindValue:
+		var args findNodeArgs
+		if err := json.Unmarshal(body, &args); err != nil {
+			return nil, fmt.Errorf("bad %s args: %w", method, err)
 		}
-		return findNodeReply{Contacts: addrs}, nil
+		if _, ok := k.store.Get(args.Target); ok {
+			return findValueReply{Found: true}, nil
+		}
+		return findValueReply{Contacts: k.closestAddrs(args.Target)}, nil
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
 	}

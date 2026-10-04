@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,8 +128,8 @@ func TestShowRT(t *testing.T) {
 	if strings.Contains(out, "(0/10)") {
 		t.Error("empty bucket printed")
 	}
-	expect(t, run(nodes[0], "show"), "usage: show rt")
-	expect(t, run(nodes[0], "show xyz"), "usage: show rt")
+	expect(t, run(nodes[0], "show"), "usage: show rt | show ds")
+	expect(t, run(nodes[0], "show xyz"), "usage: show rt | show ds")
 }
 
 func TestShowRTFlat(t *testing.T) {
@@ -218,4 +221,52 @@ func TestJoinWithRetryGivesUp(t *testing.T) {
 	if err := JoinWithRetry(ctx, node, addr(0).String(), 5, time.Second, &out); err == nil {
 		t.Error("cancelled join succeeded")
 	}
+}
+
+func TestPutGetFile(t *testing.T) {
+	nodes := testNetwork(t, 15)
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "lib.jar"), filepath.Join(dir, "copy.jar")
+	content := []byte("PK\x03\x04 pretend jar contents")
+	os.WriteFile(src, content, 0o644)
+
+	out := run(nodes[2], "put "+src)
+	expect(t, out, fmt.Sprintf("stored %d bytes on 10 nodes (0 failed)", len(content)))
+	key := kademlia.KeyFromValue(content).String()
+	expect(t, out, "key "+key)
+
+	out = run(nodes[11], "get "+key+" "+dst)
+	expect(t, out, fmt.Sprintf("saved %d bytes to %s", len(content), dst), "received from ")
+	if got, _ := os.ReadFile(dst); !bytes.Equal(got, content) {
+		t.Errorf("saved file = %q", got)
+	}
+	expect(t, run(nodes[11], "get "+strings.ToUpper(key)), "pretend jar contents", "received from ")
+}
+
+func TestPutTextAndShowDS(t *testing.T) {
+	nodes := testNetwork(t, 1)
+	n := nodes[0]
+	expect(t, run(n, "puttext hello   world"), "stored 11 bytes on 1 nodes")
+	n.DataStore().Put(kademlia.KeyFromValue([]byte{0, 1, 2}), []byte{0, 1, 2})
+	long := strings.Repeat("abcdefgh", 10)
+	run(n, "puttext "+long)
+
+	out := run(n, "show ds")
+	key := kademlia.KeyFromValue([]byte("hello world"))
+	expect(t, out, "3 values", key.Short(), "11 bytes", `"hello world"`, "(binary)", `"abcdefghabcdefghabcdefghabcdefgh…"`)
+}
+
+func TestPutGetErrors(t *testing.T) {
+	nodes := testNetwork(t, 3)
+	n := nodes[1]
+	expect(t, run(n, "put"), "usage: put FILENAME")
+	expect(t, run(n, "put /no/such/file"), "error:")
+	expect(t, run(n, "get"), "usage: get KEY")
+	expect(t, run(n, "get a b c"), "usage: get KEY")
+	expect(t, run(n, "get xyz"), "error:")
+	expect(t, run(n, "get "+kademlia.KeyFromValue([]byte("missing")).String()), "value not found")
+
+	run(n, "puttext x")
+	key := kademlia.KeyFromValue([]byte("x")).String()
+	expect(t, run(n, "get "+key+" /no/such/dir/file"), "error:")
 }
