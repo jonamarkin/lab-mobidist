@@ -11,19 +11,20 @@ import (
 	"time"
 
 	"github.com/jonamarkin/lab-mobidist/internal/kademlia"
+	"github.com/jonamarkin/lab-mobidist/internal/network"
 )
 
 // ResolveAddr turns "IP:PORT" or "HOST:PORT" (e.g. "bootstrap:4000" in
 // Docker) into an address, preferring IPv4.
 func ResolveAddr(s string) (netip.AddrPort, error) {
 	if addr, err := netip.ParseAddrPort(s); err == nil {
-		return unmap(addr), nil
+		return network.Unmap(addr), nil
 	}
 	udp, err := net.ResolveUDPAddr("udp4", s)
 	if err != nil {
 		return netip.AddrPort{}, fmt.Errorf("resolve %q: %w", s, err)
 	}
-	return unmap(udp.AddrPort()), nil
+	return network.Unmap(udp.AddrPort()), nil
 }
 
 // ListenAddr turns the -addr flag into the address to listen on. An empty
@@ -67,7 +68,7 @@ func HostIP() (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("cannot determine this host's IP: %w", err)
 	}
 	defer conn.Close()
-	return unmap(conn.LocalAddr().(*net.UDPAddr).AddrPort()).Addr(), nil
+	return network.Unmap(conn.LocalAddr().(*net.UDPAddr).AddrPort()).Addr(), nil
 }
 
 // JoinWithRetry joins through bootstrap ("IP:PORT" or "HOST:PORT"),
@@ -92,8 +93,4 @@ func JoinWithRetry(ctx context.Context, node *kademlia.Kademlia, bootstrap strin
 		}
 	}
 	return err
-}
-
-func unmap(a netip.AddrPort) netip.AddrPort {
-	return netip.AddrPortFrom(a.Addr().Unmap(), a.Port())
 }

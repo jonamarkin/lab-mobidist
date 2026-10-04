@@ -23,7 +23,7 @@ func (UDPNetwork) ListenPacket(addr netip.AddrPort) (PacketConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &udpConn{conn: conn, local: unmap(conn.LocalAddr().(*net.UDPAddr).AddrPort())}, nil
+	return &udpConn{conn: conn, local: Unmap(conn.LocalAddr().(*net.UDPAddr).AddrPort())}, nil
 }
 
 type udpConn struct {
@@ -58,14 +58,14 @@ func (c *udpConn) Recv() (Packet, error) {
 		if err != nil || n > MaxPacketSize {
 			continue
 		}
-		return Packet{From: unmap(from), Data: bytes.Clone(buf[:n])}, nil
+		return Packet{From: Unmap(from), Data: bytes.Clone(buf[:n])}, nil
 	}
 }
 
 func (c *udpConn) Close() error { return c.conn.Close() }
 
-// unmap turns an IPv4-mapped IPv6 address (::ffff:a.b.c.d) into plain IPv4.
-func unmap(a netip.AddrPort) netip.AddrPort {
+// Unmap turns an IPv4-mapped IPv6 address (::ffff:a.b.c.d) into plain IPv4.
+func Unmap(a netip.AddrPort) netip.AddrPort {
 	return netip.AddrPortFrom(a.Addr().Unmap(), a.Port())
 }
 

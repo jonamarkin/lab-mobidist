@@ -85,7 +85,7 @@ func TestUDPAddrInUse(t *testing.T) {
 
 func TestUnmap(t *testing.T) {
 	mapped := netip.MustParseAddrPort("[::ffff:10.0.0.1]:4000")
-	if got := unmap(mapped); got != netip.MustParseAddrPort("10.0.0.1:4000") {
-		t.Errorf("unmap = %v", got)
+	if got := Unmap(mapped); got != netip.MustParseAddrPort("10.0.0.1:4000") {
+		t.Errorf("Unmap = %v", got)
 	}
 }

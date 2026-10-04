@@ -13,7 +13,7 @@ import (
 )
 
 func TestStoreKeysOlderThanAndTouch(t *testing.T) {
-	s := NewStore()
+	s := NewDataStore()
 	v := []byte("v")
 	key := KeyFromValue(v)
 	s.Put(key, v)

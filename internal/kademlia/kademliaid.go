@@ -1,5 +1,7 @@
-// Package kademlia implements the core of the Kademlia DHT: identifiers,
-// the routing table, and the lookup procedures.
+// Package kademlia implements a Kademlia node: identifiers and the XOR
+// metric, the k-bucket routing table, iterative node and value lookups,
+// joining and bucket refresh, the local data store, value transfers over
+// the data plane, and periodic replication.
 package kademlia
 
 import (
@@ -10,6 +12,8 @@ import (
 	"math/bits"
 	"math/rand/v2"
 	"net/netip"
+
+	"github.com/jonamarkin/lab-mobidist/internal/network"
 )
 
 // IDBits is B, the size of the key/ID space in bits.
@@ -66,8 +70,7 @@ func RandomIDInBucket(self KademliaID, i int, r *rand.Rand) KademliaID {
 // IPv4 address seen through a dual-stack socket as ::ffff:a.b.c.d is
 // unmapped first, so it hashes the same as a.b.c.d.
 func NewNodeID(addr netip.AddrPort) KademliaID {
-	addr = netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
-	return sha256.Sum256([]byte(addr.String()))
+	return sha256.Sum256([]byte(network.Unmap(addr).String()))
 }
 
 // KeyFromValue computes the content-addressed key of a value: SHA-256(value).

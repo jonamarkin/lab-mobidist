@@ -67,7 +67,7 @@ type Kademlia struct {
 	cfg     Config
 	net     network.Network
 	rt      RoutingTable
-	store   *Store
+	store   *DataStore
 	rpc     *rpc.Endpoint
 	streams net.Listener
 	log     *slog.Logger
@@ -78,7 +78,8 @@ type Kademlia struct {
 	rng        *rand.Rand        // seeded from our ID, so runs are repeatable
 	lastLookup [IDBits]time.Time // last lookup into each bucket's range
 
-	// ctx is cancelled by Close, stopping background work (refresh).
+	// ctx is cancelled by Close, stopping background work: the refresh
+	// and replication loops and pending eviction pings.
 	ctx    context.Context
 	cancel context.CancelFunc
 	bg     sync.WaitGroup
@@ -129,7 +130,7 @@ func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia
 		me:      me,
 		cfg:     cfg,
 		net:     nw,
-		store:   NewStore(),
+		store:   NewDataStore(),
 		streams: streams,
 		log:     logger.With("node", me.ID.Short()),
 		rng:     rand.New(rand.NewPCG(binary.BigEndian.Uint64(me.ID[:8]), binary.BigEndian.Uint64(me.ID[8:16]))),
@@ -161,7 +162,7 @@ func (k *Kademlia) Me() Contact { return k.me }
 func (k *Kademlia) RoutingTable() RoutingTable { return k.rt }
 
 // DataStore returns the node's local data store.
-func (k *Kademlia) DataStore() *Store { return k.store }
+func (k *Kademlia) DataStore() *DataStore { return k.store }
 
 // Close stops background work and both planes.
 func (k *Kademlia) Close() error {

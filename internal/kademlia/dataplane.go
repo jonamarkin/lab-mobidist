@@ -99,7 +99,7 @@ func (k *Kademlia) handleStream(conn net.Conn) {
 	case opStore:
 		value, err := readValue(r, req.Size)
 		if err == nil {
-			// Store.Put enforces key == hash(value) (spec requirement).
+			// DataStore.Put enforces key == hash(value) (spec requirement).
 			err = k.store.Put(req.Key, value)
 		}
 		if err != nil {

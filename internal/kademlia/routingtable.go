@@ -7,8 +7,9 @@ import (
 )
 
 // RoutingTable is the set of contacts a node knows about. The lookup and
-// RPC code depend only on this interface, so the simple FlatRoutingTable
-// can later be replaced by a k-bucket table without changing them.
+// RPC code depend only on this interface, so the table implementation
+// (BucketRoutingTable, or FlatRoutingTable for comparisons) can be chosen
+// without changing them.
 //
 // Implementations must be safe for concurrent use.
 type RoutingTable interface {
@@ -159,8 +160,8 @@ func (rt *BucketRoutingTable) Buckets() [][]Contact {
 }
 
 // FlatRoutingTable is a simplified RoutingTable that keeps every contact
-// it hears about, with no buckets, size limit, or eviction (the shortcut
-// suggested in TIPS for getting lookups working early).
+// it hears about, with no buckets, size limit, or eviction. It is a
+// baseline for comparison with BucketRoutingTable (Config.FlatRoutingTable).
 type FlatRoutingTable struct {
 	me Contact
 

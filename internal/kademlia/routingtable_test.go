@@ -40,9 +40,11 @@ func TestFlatRoutingTableMatchesBruteForce(t *testing.T) {
 	}
 }
 
-// Regression test for the starter code's FindClosestContacts, which
-// returned A here because it stopped collecting buckets too early.
-func TestFlatRoutingTableStarterCodeCase(t *testing.T) {
+// B is closer to the target than A although A's bucket is nearer the
+// target's bucket. A search that walks buckets outward from the target's
+// bucket and stops once it has enough contacts (as the course's starter
+// code did) returns A.
+func TestClosestContactsAcrossBuckets(t *testing.T) {
 	var meID, aID, bID, target KademliaID
 	aID[0] = 0x80    // 1000…
 	bID[0] = 0x10    // 0001…

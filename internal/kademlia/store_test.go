@@ -16,7 +16,7 @@ import (
 )
 
 func TestStorePutGet(t *testing.T) {
-	s := NewStore()
+	s := NewDataStore()
 	v := []byte("hello")
 	if err := s.Put(KeyFromValue(v), v); err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestStorePutGet(t *testing.T) {
 
 // The spec: K -> V is accepted iff K = hash(V).
 func TestStoreRejectsWrongKey(t *testing.T) {
-	s := NewStore()
+	s := NewDataStore()
 	if err := s.Put(KeyFromValue([]byte("a")), []byte("b")); !errors.Is(err, ErrHashMismatch) {
 		t.Errorf("got %v, want ErrHashMismatch", err)
 	}
@@ -42,7 +42,7 @@ func TestStoreRejectsWrongKey(t *testing.T) {
 }
 
 func TestStoreKeysSorted(t *testing.T) {
-	s := NewStore()
+	s := NewDataStore()
 	for i := range 20 {
 		v := fmt.Appendf(nil, "value %d", i)
 		s.Put(KeyFromValue(v), v)
@@ -54,7 +54,7 @@ func TestStoreKeysSorted(t *testing.T) {
 }
 
 func TestStoreConcurrent(t *testing.T) {
-	s := NewStore()
+	s := NewDataStore()
 	var wg sync.WaitGroup
 	for g := range 8 {
 		wg.Go(func() {

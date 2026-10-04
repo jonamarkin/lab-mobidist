@@ -300,5 +300,5 @@ func (e *Endpoint) serve(from netip.AddrPort, env envelope) (json.RawMessage, er
 // sameAddr compares addresses, treating an IPv4-mapped IPv6 address
 // (::ffff:a.b.c.d) as equal to the plain IPv4 address.
 func sameAddr(a, b netip.AddrPort) bool {
-	return a.Addr().Unmap() == b.Addr().Unmap() && a.Port() == b.Port()
+	return network.Unmap(a) == network.Unmap(b)
 }

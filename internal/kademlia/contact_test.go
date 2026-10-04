@@ -26,7 +26,7 @@ func TestContactString(t *testing.T) {
 	}
 }
 
-// The 4-bit example from Q6: key 1010 and five nodes.
+// A 4-bit example: key 1010 and five nodes at distances 15, 4, 1, 9, 2.
 func TestSortContactsByDistance(t *testing.T) {
 	target := idLow(0b1010)
 	var contacts []Contact
