@@ -1,6 +1,7 @@
 package kademlia
 
 import (
+	"encoding/json"
 	"math/big"
 	"math/rand/v2"
 	"net/netip"
@@ -146,6 +147,33 @@ func TestNewRandomKademliaIDRepeatable(t *testing.T) {
 	b := NewRandomKademliaID(rand.New(rand.NewPCG(5, 6)))
 	if a != b {
 		t.Error("same seed gave different IDs")
+	}
+}
+
+func TestRandomIDInBucket(t *testing.T) {
+	r := rand.New(rand.NewPCG(13, 13))
+	for range 20 {
+		self := NewRandomKademliaID(r)
+		for i := range IDBits {
+			if got := BucketIndex(self, RandomIDInBucket(self, i, r)); got != i {
+				t.Fatalf("self %v, bucket %d: ID falls in bucket %d", self.Short(), i, got)
+			}
+		}
+	}
+}
+
+func TestKademliaIDJSON(t *testing.T) {
+	id := NewRandomKademliaID(rand.New(rand.NewPCG(9, 9)))
+	data, err := json.Marshal(id)
+	if err != nil || string(data) != `"`+id.String()+`"` {
+		t.Fatalf("Marshal = %s, %v", data, err)
+	}
+	var back KademliaID
+	if err := json.Unmarshal(data, &back); err != nil || back != id {
+		t.Errorf("Unmarshal = %v, %v", back, err)
+	}
+	if err := json.Unmarshal([]byte(`"abc"`), &back); err == nil {
+		t.Error("short hex accepted")
 	}
 }
 

@@ -79,6 +79,14 @@ func (n *SimNetwork) ListenPacket(addr netip.AddrPort) (PacketConn, error) {
 	return c, nil
 }
 
+// SetLossRate changes the loss probability for packets sent from now on
+// (e.g. build a network without loss, then measure lookups with loss).
+func (n *SimNetwork) SetLossRate(p float64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cfg.LossRate = p
+}
+
 // Stats returns a snapshot of the packet counters.
 func (n *SimNetwork) Stats() SimStats {
 	return SimStats{

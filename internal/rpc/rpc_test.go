@@ -230,7 +230,10 @@ func TestForgedResponsesRejected(t *testing.T) {
 // every caller must get its own answer.
 func TestConcurrentCallsMatchResponses(t *testing.T) {
 	n := network.NewSimNetwork(network.SimConfig{MaxLatency: 5 * time.Millisecond, Seed: 1})
-	client := endpoint(t, listen(t, n, 1), nil)
+	// Generous timeout: this test is about matching, not timeouts, and must
+	// not fail just because the machine is busy (e.g. under -race).
+	client := NewEndpoint(listen(t, n, 1), nil, Config{Timeout: time.Second, Retries: 2})
+	t.Cleanup(func() { client.Close() })
 	server := endpoint(t, listen(t, n, 2), echo)
 
 	var wg sync.WaitGroup

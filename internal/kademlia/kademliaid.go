@@ -48,6 +48,19 @@ func NewRandomKademliaID(r *rand.Rand) KademliaID {
 	return id
 }
 
+// RandomIDInBucket returns a random ID in bucket i of self's routing
+// table (0 <= i < IDBits): it agrees with self on all bits above bit i,
+// differs at bit i, and is random below. Used to refresh bucket i.
+func RandomIDInBucket(self KademliaID, i int, r *rand.Rand) KademliaID {
+	id := NewRandomKademliaID(r)
+	pos := IDBits - 1 - i // position of bit i counted from the most significant bit
+	byteIdx, bit := pos/8, byte(0x80>>(pos%8))
+	copy(id[:byteIdx], self[:byteIdx]) // whole bytes above bit i
+	above := ^(bit | (bit - 1))        // bits above bit i within its byte
+	id[byteIdx] = self[byteIdx]&above | ^self[byteIdx]&bit | id[byteIdx]&(bit-1)
+	return id
+}
+
 // NewNodeID computes a node's ID as SHA-256 of "IP:port". The exact string
 // matters: every node must derive the same ID for the same address. An
 // IPv4 address seen through a dual-stack socket as ::ffff:a.b.c.d is
@@ -65,6 +78,21 @@ func KeyFromValue(value []byte) KademliaID {
 // String returns the full 64-digit hex representation.
 func (id KademliaID) String() string {
 	return hex.EncodeToString(id[:])
+}
+
+// MarshalText encodes the ID as hex in JSON (instead of an array of numbers).
+func (id KademliaID) MarshalText() ([]byte, error) {
+	return []byte(id.String()), nil
+}
+
+// UnmarshalText decodes a hex ID from JSON.
+func (id *KademliaID) UnmarshalText(b []byte) error {
+	v, err := NewKademliaID(string(b))
+	if err != nil {
+		return err
+	}
+	*id = v
+	return nil
 }
 
 // Short returns the first and last 4 hex digits, e.g. "3fa2…09bc",
