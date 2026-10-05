@@ -31,7 +31,7 @@ type LookupResult struct {
 // closer contacts c knows, or (value lookups only) the verified value.
 type probeFunc func(ctx context.Context, c Contact) (contacts []Contact, value []byte, err error)
 
-// LookupContact finds the k nodes closest to target (paper §2.3) using
+// LookupContact finds the k nodes closest to target (paper, section 2.3) using
 // bounded parallelism: at most alpha probes are in flight, and a new one
 // starts as soon as any probe finishes.
 func (k *Kademlia) LookupContact(ctx context.Context, target KademliaID) (LookupResult, error) {

@@ -182,7 +182,7 @@ func (k *Kademlia) Ping(ctx context.Context, addr netip.AddrPort) (time.Duration
 	return time.Since(start), nil
 }
 
-// Join enters the network through a node already in it (paper §2.3):
+// Join enters the network through a node already in it (paper, section 2.3):
 //  1. contact the bootstrap node;
 //  2. look up our own ID, which finds and announces us to our neighbors;
 //  3. refresh every bucket farther away than our closest neighbor, so we
@@ -202,7 +202,7 @@ func (k *Kademlia) Join(ctx context.Context, bootstrap netip.AddrPort) error {
 	return nil
 }
 
-// refreshBucket looks up a random ID in bucket i (paper §2.3). Every node
+// refreshBucket looks up a random ID in bucket i (paper, section 2.3). Every node
 // that answers is added to our routing table, and learns about us.
 func (k *Kademlia) refreshBucket(ctx context.Context, i int, reason string) {
 	k.mu.Lock()
@@ -268,7 +268,7 @@ func (k *Kademlia) pingOldest(c Contact) bool {
 	return alive
 }
 
-// call makes an RPC to c and maintains the routing table (paper §2.2): a
+// call makes an RPC to c and maintains the routing table (paper, section 2.2): a
 // response means c is alive; a timeout (after all retries) means it is
 // presumed dead.
 func (k *Kademlia) call(ctx context.Context, c Contact, method string, args, reply any) error {
@@ -334,7 +334,7 @@ func (k *Kademlia) closestAddrs(target KademliaID) []netip.AddrPort {
 }
 
 // handle serves incoming RPCs. Each request also tells us its sender is
-// alive, so the sender goes into the routing table (paper §2.2).
+// alive, so the sender goes into the routing table (paper, section 2.2).
 func (k *Kademlia) handle(from netip.AddrPort, method string, body json.RawMessage) (any, error) {
 	k.rt.AddContact(NewContact(NewNodeID(from), from))
 

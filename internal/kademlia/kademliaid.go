@@ -106,7 +106,7 @@ func (id KademliaID) Short() string {
 }
 
 // CalcDistance returns id XOR target. Read as an integer, this is the
-// Kademlia distance d(id, target) (paper §2.1).
+// Kademlia distance d(id, target) (paper, section 2.1).
 func (id KademliaID) CalcDistance(target KademliaID) KademliaID {
 	var d KademliaID
 	for i := range id {

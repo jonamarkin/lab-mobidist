@@ -3,7 +3,7 @@ package kademlia
 import "time"
 
 // replicateLoop republishes stale values every ReplicateInterval until
-// Close (paper §2.5).
+// Close (paper, section 2.5).
 //
 // The first round starts at a random point within the first interval, so
 // that nodes started together (e.g. 50 containers) do not all replicate

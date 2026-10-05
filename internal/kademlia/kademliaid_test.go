@@ -75,7 +75,7 @@ func TestLeadingZeros(t *testing.T) {
 	}
 }
 
-// XOR metric properties from paper §2.1, checked on random IDs.
+// XOR metric properties from paper, section 2.1, checked on random IDs.
 func TestXorMetricProperties(t *testing.T) {
 	r := rand.New(rand.NewPCG(1, 2))
 	var zero KademliaID

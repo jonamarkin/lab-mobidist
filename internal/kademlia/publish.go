@@ -14,7 +14,7 @@ type StoreResult struct {
 	Failed   int       // nodes that could not be reached or rejected it
 }
 
-// Store publishes value under key = hash(value) (paper §2.3): look up the
+// Store publishes value under key = hash(value) (paper, section 2.3): look up the
 // k nodes closest to the key and send each of them the value over the
 // data plane. If this node is itself among the k closest, it keeps a copy
 // as one of the k.

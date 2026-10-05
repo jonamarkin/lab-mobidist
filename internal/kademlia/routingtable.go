@@ -31,7 +31,7 @@ type RoutingTable interface {
 // evict its least recently seen contact.
 type Pinger func(c Contact) bool
 
-// BucketRoutingTable is the routing table from the Kademlia paper (§2.2)
+// BucketRoutingTable is the routing table from the Kademlia paper (section 2.2)
 // with b = 1: IDBits k-buckets, where bucket i holds up to k contacts at
 // distance [2^i, 2^(i+1)) from us, least recently seen first.
 type BucketRoutingTable struct {
@@ -57,7 +57,7 @@ func NewBucketRoutingTable(me Contact, k int, ping Pinger) *BucketRoutingTable {
 	return &BucketRoutingTable{me: me, k: k, ping: ping}
 }
 
-// AddContact records that we heard from c (paper §2.2):
+// AddContact records that we heard from c (paper, section 2.2):
 //   - already known: move it to the tail (most recently seen);
 //   - bucket not full: append it at the tail;
 //   - bucket full: check in the background whether the least recently
