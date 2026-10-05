@@ -16,8 +16,7 @@ build:
 	go build -o bin/kademlia ./cmd/kademlia
 
 # Run both experiments (5 seeds each) on the simulated network, then
-# analyze the event log: tables to stdout, CSV files in results/ (plot them
-# with any tool).
+# analyze the event log: tables to stdout, CSV files in results/
 experiments:
 	go run ./cmd/experiment -out results/experiments.jsonl
 	python3 scripts/analyze.py results/experiments.jsonl

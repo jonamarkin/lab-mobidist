@@ -41,7 +41,7 @@ func (k *Kademlia) LookupContact(ctx context.Context, target KademliaID) (Lookup
 	})
 }
 
-// LookupData finds the value stored under key (paper §2.3, FIND_VALUE):
+// LookupData finds the value stored under key ( FIND_VALUE):
 // the same iterative lookup, but it stops as soon as some node delivers
 // a value whose hash matches the key.
 func (k *Kademlia) LookupData(ctx context.Context, key KademliaID) (LookupResult, error) {
