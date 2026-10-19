@@ -78,6 +78,9 @@ Results (tables and CSV files) are written to `results/`.
 1. Lookup cost (probes and hops) as a function of network size N.
 2. Lookup success rate as a function of packet loss.
 
+`results-final/` holds the run used in the report: the event log, the
+analysis output (`run.txt`), the CSV files, and the commit it was made from.
+
 ## Layout
 
 | Path | Contents |
