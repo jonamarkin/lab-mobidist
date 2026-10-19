@@ -1,0 +1,103 @@
+go run ./cmd/experiment -out results/experiments.jsonl
+probes: n=25 seed=1 done
+probes: n=25 seed=2 done
+probes: n=25 seed=3 done
+probes: n=25 seed=4 done
+probes: n=25 seed=5 done
+probes: n=50 seed=1 done
+probes: n=50 seed=2 done
+probes: n=50 seed=3 done
+probes: n=50 seed=4 done
+probes: n=50 seed=5 done
+probes: n=100 seed=1 done
+probes: n=100 seed=2 done
+probes: n=100 seed=3 done
+probes: n=100 seed=4 done
+probes: n=100 seed=5 done
+probes: n=200 seed=1 done
+probes: n=200 seed=2 done
+probes: n=200 seed=3 done
+probes: n=200 seed=4 done
+probes: n=200 seed=5 done
+probes: n=400 seed=1 done
+probes: n=400 seed=2 done
+probes: n=400 seed=3 done
+probes: n=400 seed=4 done
+probes: n=400 seed=5 done
+probes: n=800 seed=1 done
+probes: n=800 seed=2 done
+probes: n=800 seed=3 done
+probes: n=800 seed=4 done
+probes: n=800 seed=5 done
+probes: n=1600 seed=1 done
+probes: n=1600 seed=2 done
+probes: n=1600 seed=3 done
+probes: n=1600 seed=4 done
+probes: n=1600 seed=5 done
+loss: p=0.00 seed=1 done
+loss: p=0.00 seed=2 done
+loss: p=0.00 seed=3 done
+loss: p=0.00 seed=4 done
+loss: p=0.00 seed=5 done
+loss: p=0.10 seed=1 done
+loss: p=0.10 seed=2 done
+loss: p=0.10 seed=3 done
+loss: p=0.10 seed=4 done
+loss: p=0.10 seed=5 done
+loss: p=0.20 seed=1 done
+loss: p=0.20 seed=2 done
+loss: p=0.20 seed=3 done
+loss: p=0.20 seed=4 done
+loss: p=0.20 seed=5 done
+loss: p=0.30 seed=1 done
+loss: p=0.30 seed=2 done
+loss: p=0.30 seed=3 done
+loss: p=0.30 seed=4 done
+loss: p=0.30 seed=5 done
+loss: p=0.40 seed=1 done
+loss: p=0.40 seed=2 done
+loss: p=0.40 seed=3 done
+loss: p=0.40 seed=4 done
+loss: p=0.40 seed=5 done
+loss: p=0.50 seed=1 done
+loss: p=0.50 seed=2 done
+loss: p=0.50 seed=3 done
+loss: p=0.50 seed=4 done
+loss: p=0.50 seed=5 done
+loss: p=0.60 seed=1 done
+loss: p=0.60 seed=2 done
+loss: p=0.60 seed=3 done
+loss: p=0.60 seed=4 done
+loss: p=0.60 seed=5 done
+loss: p=0.70 seed=1 done
+loss: p=0.70 seed=2 done
+loss: p=0.70 seed=3 done
+loss: p=0.70 seed=4 done
+loss: p=0.70 seed=5 done
+wrote results/experiments.jsonl
+python3 scripts/analyze.py results/experiments.jsonl
+cross-check: 7500/7500 lookups have probes == number of probe events
+
+Experiment 1: lookup cost vs network size N (k=10, alpha=3, no loss)
+     N seeds         probes     var         hops     var  log2N log2N/log2k
+    25     5    10.00 ± 0.00   0.000   1.06 ± 0.02  0.0006   4.64        1.40
+    50     5    10.30 ± 0.05   0.003   1.37 ± 0.04  0.0019   5.64        1.70
+   100     5    10.88 ± 0.17   0.030   1.61 ± 0.07  0.0051   6.64        2.00
+   200     5    11.74 ± 0.22   0.048   1.89 ± 0.08  0.0057   7.64        2.30
+   400     5    12.48 ± 0.10   0.011   2.15 ± 0.07  0.0045   8.64        2.60
+   800     5    13.21 ± 0.13   0.016   2.36 ± 0.03  0.0010   9.64        2.90
+  1600     5    13.93 ± 0.16   0.027   2.65 ± 0.09  0.0081  10.64        3.20
+fit: probes ≈ 6.55 + 0.69·log2(N);  hops ≈ -0.13 + 0.26·log2(N)
+wrote results/exp1_probes.csv
+
+Experiment 2: value lookup success vs packet loss (N=500, k=10, alpha=3)
+ loss seeds          success       var        probes failed probes  1 RPC ok
+ 0.00     5    100.0% ± 0.0    0.00000     5.4 ± 0.2           0.0%    100.0%
+ 0.10     5    100.0% ± 0.0    0.00000     5.0 ± 0.1           0.0%     99.3%
+ 0.20     5    100.0% ± 0.0    0.00000     4.8 ± 0.2           0.1%     95.3%
+ 0.30     5    100.0% ± 0.0    0.00000     4.8 ± 0.2           0.9%     86.7%
+ 0.40     5    100.0% ± 0.0    0.00000     4.9 ± 0.1           3.4%     73.8%
+ 0.50     5     99.8% ± 0.4    0.00002     5.7 ± 0.5          12.4%     57.8%
+ 0.60     5     99.0% ± 0.7    0.00005     7.3 ± 0.4          25.9%     40.7%
+ 0.70     5     84.6% ± 3.0    0.00088    11.1 ± 0.9          45.5%     24.6%
+wrote results/exp2_loss.csv
