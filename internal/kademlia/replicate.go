@@ -43,8 +43,9 @@ func (k *Kademlia) replicateStale() {
 			continue
 		}
 		res, err := k.Store(k.ctx, value)
-		// Our own copy counts as refreshed even if we are no longer among
-		// the k closest; otherwise we would republish it every round.
+		// Record the republish on our own copy too (Put already did if we
+		// are one of the k closest). Rounds are a full interval apart, so
+		// the key is due again next round either way.
 		k.store.Touch(key)
 		if err != nil {
 			k.log.Warn("replicate_failed", "key", key.Short(), "err", err.Error())
