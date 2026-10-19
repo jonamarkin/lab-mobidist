@@ -11,3 +11,6 @@ coverage.html
 
 # Experiment output (regenerate with make experiments)
 /results/
+
+# Node event logs from local runs (bin/kademlia -log defaults to kademlia.log)
+*.log

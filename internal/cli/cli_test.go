@@ -81,6 +81,17 @@ func TestRunStopsAtEOF(t *testing.T) {
 	expect(t, out.String(), "full ID")
 }
 
+// A line longer than bufio's default 64 KiB limit is still one command.
+func TestRunLongLine(t *testing.T) {
+	nodes := testNetwork(t, 1)
+	var out bytes.Buffer
+	text := strings.Repeat("x", 100<<10)
+	if err := NewShell(nodes[0], &out).Run(strings.NewReader("puttext " + text + "\nid\n")); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, out.String(), fmt.Sprintf("stored %d bytes", len(text)), "full ID")
+}
+
 func TestPingByAddress(t *testing.T) {
 	nodes := testNetwork(t, 3)
 	expect(t, run(nodes[1], "ping "+addr(2).String()), "reply from "+nodes[2].Me().String(), "rtt=")

@@ -46,6 +46,9 @@ const help = `commands:
 // Run executes commands from in until "exit" or end of input.
 func (s *Shell) Run(in io.Reader) error {
 	scanner := bufio.NewScanner(in)
+	// Allow lines as long as the largest value (for puttext); bufio's
+	// default limit of 64 KiB would end the shell on a longer line.
+	scanner.Buffer(nil, kademlia.MaxValueSize+len("puttext "))
 	for {
 		fmt.Fprint(s.out, "> ")
 		if !scanner.Scan() {
