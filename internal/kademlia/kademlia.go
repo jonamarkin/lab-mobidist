@@ -50,6 +50,10 @@ type Config struct {
 	// hour). 0 disables replication.
 	ReplicateInterval time.Duration
 
+	// Validator decides whether a value may be stored under a mutable key
+	// (see mutable.go). nil disables mutable keys on this node.
+	Validator Validator
+
 	Logger *slog.Logger
 }
 
@@ -352,7 +356,10 @@ func (k *Kademlia) handle(from netip.AddrPort, method string, body json.RawMessa
 		if err := json.Unmarshal(body, &args); err != nil {
 			return nil, fmt.Errorf("bad %s args: %w", method, err)
 		}
-		if _, ok := k.store.Get(args.Target); ok {
+		// Only content-addressed values are "found": a mutable value
+		// would fail the client's hash check (its holders are read with
+		// LookupAll instead).
+		if _, mutable, ok := k.store.Entry(args.Target); ok && !mutable {
 			return findValueReply{Found: true}, nil
 		}
 		return findValueReply{Contacts: k.closestAddrs(args.Target)}, nil

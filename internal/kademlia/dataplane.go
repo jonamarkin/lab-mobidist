@@ -22,13 +22,15 @@ const maxHeaderSize = 4096
 
 // Data-plane protocol: one stream (TCP connection) per transfer.
 //
-//	STORE: client sends {"op":"STORE","key":K,"size":N}\n + N value bytes
-//	       server replies {"ok":true}\n, or {"ok":false,"error":...}\n
-//	FETCH: client sends {"op":"FETCH","key":K}\n
-//	       server replies {"ok":true,"size":N}\n + N value bytes, or an error
+//	STORE:  client sends {"op":"STORE","key":K,"size":N}\n + N value bytes
+//	        server replies {"ok":true}\n, or {"ok":false,"error":...}\n
+//	UPDATE: as STORE, for a mutable key; the server's Validator decides
+//	FETCH:  client sends {"op":"FETCH","key":K}\n
+//	        server replies {"ok":true,"size":N}\n + N value bytes, or an error
 const (
-	opStore = "STORE"
-	opFetch = "FETCH"
+	opStore  = "STORE"
+	opUpdate = "UPDATE"
+	opFetch  = "FETCH"
 )
 
 type streamRequest struct {
@@ -41,6 +43,17 @@ type streamResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 	Size  int    `json:"size,omitempty"`
+}
+
+// RefusedError is returned when a node answered an UPDATE with a refusal.
+// Reason is the message of the node's validator.
+type RefusedError struct {
+	From   Contact
+	Reason string
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("update refused by %v: %s", e.From, e.Reason)
 }
 
 // readHeader reads one JSON line of at most maxHeaderSize bytes.
@@ -84,7 +97,7 @@ func (k *Kademlia) serveStreams() {
 	}
 }
 
-// handleStream serves one STORE or FETCH request.
+// handleStream serves one STORE, UPDATE or FETCH request.
 func (k *Kademlia) handleStream(conn net.Conn) {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(k.cfg.TransferTimeout)) // never hang forever
@@ -96,18 +109,24 @@ func (k *Kademlia) handleStream(conn net.Conn) {
 		return
 	}
 	switch req.Op {
-	case opStore:
+	case opStore, opUpdate:
 		value, err := readValue(r, req.Size)
-		if err == nil {
+		if err == nil && req.Op == opStore {
 			// DataStore.Put enforces key == hash(value) (spec requirement).
 			err = k.store.Put(req.Key, value)
+		} else if err == nil {
+			// The validator may need the network (to fetch what the value
+			// refers to), so it gets a context bounded like the transfer.
+			ctx, cancel := context.WithTimeout(k.ctx, k.cfg.TransferTimeout)
+			err = k.updateLocal(ctx, req.Key, value)
+			cancel()
 		}
 		if err != nil {
-			k.log.Warn("store_rejected", "key", req.Key.Short(), "err", err.Error())
+			k.log.Warn("store_rejected", "op", req.Op, "key", req.Key.Short(), "err", err.Error())
 			writeHeader(conn, streamResponse{Error: err.Error()})
 			return
 		}
-		k.log.Info("stored", "key", req.Key.Short(), "size", len(value))
+		k.log.Info("stored", "op", req.Op, "key", req.Key.Short(), "size", len(value))
 		writeHeader(conn, streamResponse{OK: true})
 	case opFetch:
 		value, ok := k.store.Get(req.Key)
@@ -133,32 +152,57 @@ func (k *Kademlia) dial(ctx context.Context, c Contact) (net.Conn, *bufio.Reader
 	return conn, bufio.NewReaderSize(conn, maxHeaderSize), nil
 }
 
-// storeAt pushes key -> value to c over the data plane.
-func (k *Kademlia) storeAt(ctx context.Context, c Contact, key KademliaID, value []byte) error {
+// sendValue pushes key -> value to c with op (STORE or UPDATE) and returns
+// the node's reply: nil, or its error message.
+func (k *Kademlia) sendValue(ctx context.Context, c Contact, op string, key KademliaID, value []byte) (reply string, err error) {
 	conn, r, err := k.dial(ctx, c)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer conn.Close()
-	if err := writeHeader(conn, streamRequest{Op: opStore, Key: key, Size: len(value)}); err != nil {
-		return err
+	if err := writeHeader(conn, streamRequest{Op: op, Key: key, Size: len(value)}); err != nil {
+		return "", err
 	}
 	if _, err := conn.Write(value); err != nil {
-		return err
+		return "", err
 	}
 	var resp streamResponse
 	if err := readHeader(r, &resp); err != nil {
-		return err
+		return "", err
 	}
 	if !resp.OK {
-		return fmt.Errorf("store rejected by %v: %s", c, resp.Error)
+		return resp.Error, nil
+	}
+	return "", nil
+}
+
+// storeAt pushes key -> value to c over the data plane.
+func (k *Kademlia) storeAt(ctx context.Context, c Contact, key KademliaID, value []byte) error {
+	reply, err := k.sendValue(ctx, c, opStore, key, value)
+	if err != nil {
+		return err
+	}
+	if reply != "" {
+		return fmt.Errorf("store rejected by %v: %s", c, reply)
 	}
 	return nil
 }
 
-// fetchFrom pulls the value for key from c and checks that key ==
-// hash(value). A mismatching value is discarded and reported (spec).
-func (k *Kademlia) fetchFrom(ctx context.Context, c Contact, key KademliaID) ([]byte, error) {
+// updateAt asks c to store value under the mutable key. A refusal by c's
+// validator comes back as a *RefusedError.
+func (k *Kademlia) updateAt(ctx context.Context, c Contact, key KademliaID, value []byte) error {
+	reply, err := k.sendValue(ctx, c, opUpdate, key, value)
+	if err != nil {
+		return err
+	}
+	if reply != "" {
+		return &RefusedError{From: c, Reason: reply}
+	}
+	return nil
+}
+
+// fetchRaw pulls the value for key from c, unchecked.
+func (k *Kademlia) fetchRaw(ctx context.Context, c Contact, key KademliaID) ([]byte, error) {
 	conn, r, err := k.dial(ctx, c)
 	if err != nil {
 		return nil, err
@@ -174,7 +218,13 @@ func (k *Kademlia) fetchFrom(ctx context.Context, c Contact, key KademliaID) ([]
 	if !resp.OK {
 		return nil, fmt.Errorf("fetch from %v: %s", c, resp.Error)
 	}
-	value, err := readValue(r, resp.Size)
+	return readValue(r, resp.Size)
+}
+
+// fetchFrom pulls the value for key from c and checks that key ==
+// hash(value). A mismatching value is discarded and reported (spec).
+func (k *Kademlia) fetchFrom(ctx context.Context, c Contact, key KademliaID) ([]byte, error) {
+	value, err := k.fetchRaw(ctx, c, key)
 	if err != nil {
 		return nil, err
 	}

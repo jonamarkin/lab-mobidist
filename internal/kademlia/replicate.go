@@ -42,7 +42,20 @@ func (k *Kademlia) replicateStale() {
 		if !ok {
 			continue
 		}
-		res, err := k.Store(k.ctx, value)
+		var stored, failed int
+		var err error
+		if k.store.IsMutable(key) {
+			// A mutable value goes through every holder's validator; a
+			// holder with a newer value refuses ours, and one with an
+			// older value catches up: replication heals stale holders.
+			var res UpdateResult
+			res, err = k.Update(k.ctx, key, value)
+			stored, failed = len(res.Accepted), len(res.Refused)+res.Failed
+		} else {
+			var res StoreResult
+			res, err = k.Store(k.ctx, value)
+			stored, failed = len(res.StoredAt), res.Failed
+		}
 		// Record the republish on our own copy too (Put already did if we
 		// are one of the k closest). Rounds are a full interval apart, so
 		// the key is due again next round either way.
@@ -52,7 +65,7 @@ func (k *Kademlia) replicateStale() {
 			continue
 		}
 		replicated++
-		k.log.Info("replicate", "key", key.Short(), "stored", len(res.StoredAt), "failed", res.Failed)
+		k.log.Info("replicate", "key", key.Short(), "stored", stored, "failed", failed)
 	}
 	k.log.Info("replicate_round", "due", len(keys), "replicated", replicated,
 		"held", len(k.store.Keys()))

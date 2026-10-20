@@ -45,7 +45,7 @@ func (k *Kademlia) LookupContact(ctx context.Context, target KademliaID) (Lookup
 // the same iterative lookup, but it stops as soon as some node delivers
 // a value whose hash matches the key.
 func (k *Kademlia) LookupData(ctx context.Context, key KademliaID) (LookupResult, error) {
-	if value, ok := k.store.Get(key); ok {
+	if value, mutable, ok := k.store.Entry(key); ok && !mutable {
 		// A local hit is a successful lookup too, so it is logged (with
 		// local=true and no probes, so analyses can tell it apart).
 		k.log.Info("lookup_done", "lookup", k.lookups.Add(1), "kind", "value", "target", key.Short(),
