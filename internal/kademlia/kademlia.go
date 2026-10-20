@@ -108,24 +108,32 @@ type findValueReply struct {
 
 // NewKademlia starts a node listening on addr. Its ID is NewNodeID(addr).
 func NewKademlia(nw network.Network, addr netip.AddrPort, cfg Config) (*Kademlia, error) {
-	conn, err := nw.ListenPacket(addr)
-	if err != nil {
-		return nil, err
-	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	// Use the address the endpoint actually got (e.g. the port the OS
-	// picked for port 0): the ID must match what other nodes see.
-	addr = conn.LocalAddr()
-	// The data plane listens on the same IP and port, over streams (TCP
-	// and UDP port numbers are separate), so no extra address is needed.
-	streams, err := nw.ListenStream(addr)
-	if err != nil {
+	// The data plane listens on the same IP and port as the control plane,
+	// over streams (TCP and UDP port numbers are separate). With port 0
+	// the OS picks the UDP port, and the same TCP port may be taken by
+	// someone else: then simply try another one.
+	var conn network.PacketConn
+	var streams net.Listener
+	for attempt := 0; ; attempt++ {
+		var err error
+		if conn, err = nw.ListenPacket(addr); err != nil {
+			return nil, err
+		}
+		// Use the address the endpoint actually got: the ID must match
+		// what other nodes see.
+		if streams, err = nw.ListenStream(conn.LocalAddr()); err == nil {
+			break
+		}
 		conn.Close()
-		return nil, err
+		if addr.Port() != 0 || attempt == 4 {
+			return nil, err
+		}
 	}
+	addr = conn.LocalAddr()
 	if cfg.TransferTimeout <= 0 {
 		cfg.TransferTimeout = DefaultConfig().TransferTimeout
 	}
