@@ -77,7 +77,7 @@ publish-demo:
 # a rollback, a fork, and a publish signed by another domain's key.
 reject-demo:
 	$(IN_NODE) 'echo "bad" > /tmp/bad; \
-	  printf "publish --force demo.test:hello:0.9.0 /tmp/bad\npublish --force --prev=1.0.0 demo.test:hello:1.0.1 /tmp/bad\nexit\n" \
+	  printf "publish --force demo.test:hello:0.9.0 /tmp/bad\npublish --force --prev=1.0.0 demo.test:hello:1.2.0 /tmp/bad\nexit\n" \
 	  | kademlia $(NODE_FLAGS) -key /demo/demo.test.pem'
 	$(IN_NODE) 'echo "bad" > /tmp/bad; \
 	  printf "publish --force demo.test:hello:2.0.0 /tmp/bad\nshow demo.test:hello\nexit\n" \
