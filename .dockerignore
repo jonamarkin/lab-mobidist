@@ -2,3 +2,7 @@
 .claude
 *.log
 *.out
+bin/
+results/
+results-final/
+study/
