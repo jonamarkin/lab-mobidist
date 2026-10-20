@@ -279,13 +279,38 @@ func TestUpdateConcurrentAcrossNetwork(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	// Every holder has one of the values, none has anything above the
+	// highest, and the highest reached at least one holder. (A holder can
+	// be a step behind if a lookup timed out while the updates raced: a
+	// probe that missed it is not a rollback.)
 	copies, _ := nodes[14].LookupAll(ctx, mkey)
 	if len(copies) == 0 {
 		t.Fatal("no copies")
 	}
+	var winner *Kademlia
+	for _, c := range copies {
+		if v := string(c.Value); v < "v000" || v > "v009" {
+			t.Errorf("%v holds %q", c.From, c.Value)
+		} else if v == "v009" {
+			winner = byID(nodes, c.From.ID)
+		}
+	}
+	if winner == nil {
+		t.Fatal("no holder has the highest value")
+	}
+	// One replication round from a holder of the highest value brings
+	// every holder up to date; none of them rolls back.
+	winner.cfg.ReplicateInterval = time.Hour
+	winner.store.mu.Lock()
+	e := winner.store.entries[mkey]
+	e.stored = time.Now().Add(-2 * time.Hour)
+	winner.store.entries[mkey] = e
+	winner.store.mu.Unlock()
+	winner.replicateStale()
+	copies, _ = nodes[14].LookupAll(ctx, mkey)
 	for _, c := range copies {
 		if string(c.Value) != "v009" {
-			t.Errorf("%v holds %q, want v009", c.From, c.Value)
+			t.Errorf("%v holds %q after replication, want v009", c.From, c.Value)
 		}
 	}
 }

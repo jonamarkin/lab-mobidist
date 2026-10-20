@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net/netip"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jonamarkin/lab-mobidist/internal/kademlia"
 	"github.com/jonamarkin/lab-mobidist/internal/network"
+	"github.com/jonamarkin/lab-mobidist/internal/registry"
 	"github.com/jonamarkin/lab-mobidist/internal/rpc"
 )
 
@@ -280,4 +282,197 @@ func TestPutGetErrors(t *testing.T) {
 	run(n, "puttext x")
 	key := kademlia.KeyFromValue([]byte("x")).String()
 	expect(t, run(n, "get "+key+" /no/such/dir/file"), "error:")
+}
+
+// registryNetwork starts n nodes whose holders validate package records,
+// and returns the fake DNS and the key that owns demo.test.
+func registryNetwork(t *testing.T, n int) ([]*kademlia.Kademlia, *registry.FakeDNS, ed25519.PrivateKey) {
+	t.Helper()
+	pk, sk, err := registry.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns := registry.NewFakeDNS()
+	dns.Set("demo.test", pk)
+	cfg := testCfg
+	cfg.Validator = registry.Validator{Verifier: dns}
+	sim := network.NewSimNetwork(network.SimConfig{})
+	var nodes []*kademlia.Kademlia
+	for i := range n {
+		k, err := kademlia.NewKademlia(sim, addr(i), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { k.Close() })
+		if i > 0 {
+			if err := k.Join(context.Background(), addr(0)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		nodes = append(nodes, k)
+	}
+	return nodes, dns, sk
+}
+
+// registryShell returns a shell on node with a registry client; key may be nil.
+func registryShell(node *kademlia.Kademlia, dns *registry.FakeDNS, key ed25519.PrivateKey) (*Shell, *bytes.Buffer) {
+	var out bytes.Buffer
+	s := NewShell(node, &out)
+	s.Registry = registry.NewClient(node, dns, key)
+	return s, &out
+}
+
+func TestPublishInstallShow(t *testing.T) {
+	nodes, dns, sk := registryNetwork(t, 12)
+	dir := t.TempDir()
+	v1, v2 := filepath.Join(dir, "v1.txt"), filepath.Join(dir, "v2.txt")
+	os.WriteFile(v1, []byte("hello, version 1"), 0o644)
+	os.WriteFile(v2, []byte("hello, version 2"), 0o644)
+	owner, out := registryShell(nodes[1], dns, sk)
+	reader, rout := registryShell(nodes[9], dns, nil)
+
+	owner.Execute("publish demo.test:hello:1.0.0 " + v1)
+	expect(t, out.String(), "published demo.test:hello 1.0.0", "pointer accepted by 10, refused by 0")
+	out.Reset()
+	owner.Execute("publish demo.test:hello:1.1.0 " + v2)
+	expect(t, out.String(), "published demo.test:hello 1.1.0")
+
+	reader.Execute("install demo.test:hello:latest")
+	expect(t, rout.String(), "hello, version 2", "installed demo.test:hello 1.1.0 (latest is 1.1.0)", "received from")
+	rout.Reset()
+	saved := filepath.Join(dir, "got.txt")
+	reader.Execute("install demo.test:hello:1.0.0 " + saved)
+	expect(t, rout.String(), "saved 16 bytes", "installed demo.test:hello 1.0.0 (latest is 1.1.0)")
+	if data, _ := os.ReadFile(saved); string(data) != "hello, version 1" {
+		t.Errorf("saved file = %q", data)
+	}
+	rout.Reset()
+	reader.Execute("show demo.test:hello")
+	expect(t, rout.String(), "demo.test:hello: 2 versions", "-> 1.1.0", "   1.0.0", "signature ok")
+	rout.Reset()
+	reader.Execute("show dns demo.test")
+	expect(t, rout.String(), "demo.test is owned by", "kademlia-pk=ed25519:")
+	rout.Reset()
+	reader.Execute("show dns nobody.test")
+	expect(t, rout.String(), "error:", "no owner key")
+
+	// show ds decodes pointers and records on the nodes that hold them
+	// (the pointer and a record live under different keys, so usually on
+	// different nodes).
+	chain, err := reader.Registry.Chain(context.Background(), "demo.test", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPointer, sawRecord bool
+	for _, n := range nodes {
+		if n.DataStore().IsMutable(registry.LatestKey("demo.test", "hello")) && !sawPointer {
+			expect(t, run(n, "show ds"), "latest  demo.test:hello -> 1.1.0 (record")
+			sawPointer = true
+		}
+		if _, ok := n.DataStore().Get(chain[0].RecordKey); ok && !sawRecord {
+			expect(t, run(n, "show ds"), "record  demo.test:hello 1.1.0 -> blob")
+			sawRecord = true
+		}
+	}
+	if !sawPointer || !sawRecord {
+		t.Errorf("no node holds the pointer (%v) or the record (%v)", sawPointer, sawRecord)
+	}
+}
+
+func TestPublishFlagsAndErrors(t *testing.T) {
+	nodes, dns, sk := registryNetwork(t, 12)
+	dir := t.TempDir()
+	v1 := filepath.Join(dir, "v1.txt")
+	os.WriteFile(v1, []byte("one"), 0o644)
+	owner, out := registryShell(nodes[1], dns, sk)
+	owner.Execute("publish demo.test:hello:1.0.0 " + v1)
+	owner.Execute("publish demo.test:hello:1.1.0 " + v1)
+	out.Reset()
+
+	cases := map[string][]string{
+		"publish":                       {"usage: publish"},
+		"publish demo.test:hello:1.2.0": {"usage: publish"},
+		"publish --bogus demo.test:hello:1.2.0 " + v1:              {"unknown flag"},
+		"publish --prev=x demo.test:hello:1.2.0 " + v1:             {"want MAJOR.MINOR.PATCH"},
+		"publish demo.test:hello " + v1:                            {"want DOMAIN:PACKAGE:VERSION"},
+		"publish demo.test:hello:1.2.0 /no/such/file":              {"no such file"},
+		"publish demo.test:hello:1.0.5 " + v1:                      {"not newer"},
+		"publish --prev=1.0.0 demo.test:hello:1.2.0 " + v1:         {"forks", "1.0.0 is not the latest"},
+		"publish --force --prev=1.0.0 demo.test:hello:1.2.0 " + v1: {"refused by 10", "fork"},
+		"publish --force demo.test:hello:0.9.0 " + v1:              {"refused by 10", "not newer", "error:"},
+		"install":                                       {"usage: install"},
+		"install demo.test:hello":                       {"want DOMAIN:PACKAGE:VERSION"},
+		"install demo.test:nothing:latest":              {"no such package"},
+		"install demo.test:hello:9.9.9":                 {"no such version"},
+		"install demo.test:hello:latest /no/such/dir/x": {"no such file or directory"},
+		"show":                   {"usage: show"},
+		"show dns":               {"usage: show"},
+		"show demo.test":         {"usage: show"},
+		"show de:mo:x":           {"want DOMAIN:PACKAGE"},
+		"show demo.test:nothing": {"no such package"},
+	}
+	for line, wants := range cases {
+		out.Reset()
+		owner.Execute(line)
+		expect(t, out.String(), wants...)
+	}
+	// After all that, latest is still 1.1.0.
+	out.Reset()
+	owner.Execute("install demo.test:hello:latest")
+	expect(t, out.String(), "installed demo.test:hello 1.1.0")
+
+	// A node without a signing key cannot publish; one without a registry
+	// has none of the commands.
+	noKey, nout := registryShell(nodes[2], dns, nil)
+	noKey.Execute("publish demo.test:hello:1.2.0 " + v1)
+	expect(t, nout.String(), "no signing key")
+	expect(t, run(nodes[3], "publish demo.test:hello:1.2.0 "+v1), "no registry")
+	expect(t, run(nodes[3], "install demo.test:hello:latest"), "no registry")
+	expect(t, run(nodes[3], "show demo.test:hello"), "no registry")
+	expect(t, run(nodes[3], "show dns demo.test"), "no registry")
+	expect(t, run(nodes[3], "help"), "publish [--force]", "show dns DOMAIN")
+}
+
+func TestNewVerifierAndKeygen(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "owner.pem")
+	var out bytes.Buffer
+	if err := Keygen(keyPath, &out); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, out.String(), "private key saved to "+keyPath, "kademlia-pk=ed25519:")
+	sk, err := registry.LoadKey(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txt := registry.EncodePublicKey(sk.Public().(ed25519.PublicKey))
+	if !strings.Contains(out.String(), txt) {
+		t.Error("keygen did not print the key's TXT record")
+	}
+	if err := Keygen(filepath.Join(dir, "missing", "x.pem"), &out); err == nil {
+		t.Error("keygen into a missing directory succeeded")
+	}
+
+	dnsPath := filepath.Join(dir, "dns.txt")
+	os.WriteFile(dnsPath, []byte("demo.test "+txt+"\n"), 0o644)
+	v, err := NewVerifier(dnsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pk, err := v.OwnerKey(context.Background(), "demo.test"); err != nil || !pk.Equal(sk.Public().(ed25519.PublicKey)) {
+		t.Errorf("fake DNS from file: %x, %v", pk, err)
+	}
+	if _, err := NewVerifier(filepath.Join(dir, "nope.txt")); err == nil {
+		t.Error("a missing dns file was accepted")
+	}
+	if _, ok := must(NewVerifier("")).(*registry.DNSVerifier); !ok {
+		t.Error("an empty -dns does not use real DNS")
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }

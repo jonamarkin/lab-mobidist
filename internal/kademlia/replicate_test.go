@@ -121,12 +121,14 @@ func TestNoReplicationLosesValue(t *testing.T) {
 // it); once it is older than the interval it is republished to the k
 // closest nodes, and our own copy counts as refreshed.
 func TestReplicateStaleSkipsFreshValues(t *testing.T) {
+	var logs syncBuffer
+	cfg := testConfig(3)
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	sim := network.NewSimNetwork(network.SimConfig{})
-	nodes := newTestNetwork(t, sim, 15, testConfig(3))
+	nodes := newTestNetwork(t, sim, 15, cfg)
 	n := nodes[4]
 	n.cfg.ReplicateInterval = time.Hour // replicateStale's threshold; no loop runs
-	var logs syncBuffer
-	n.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	logs.reset()
 
 	value := []byte("held only by n")
 	key := KeyFromValue(value)
@@ -176,11 +178,12 @@ func TestReplicateLoop(t *testing.T) {
 
 // A replication that cannot store anywhere is logged, not fatal.
 func TestReplicateFailureIsLogged(t *testing.T) {
-	sim := network.NewSimNetwork(network.SimConfig{})
-	k := newTestNetwork(t, sim, 1, testConfig(3))[0]
-	k.cfg.ReplicateInterval = time.Hour
 	var logs syncBuffer
-	k.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	cfg := testConfig(3)
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	sim := network.NewSimNetwork(network.SimConfig{})
+	k := newTestNetwork(t, sim, 1, cfg)[0]
+	k.cfg.ReplicateInterval = time.Hour
 
 	value := make([]byte, MaxValueSize+1) // Store refuses it
 	key := KeyFromValue(value)

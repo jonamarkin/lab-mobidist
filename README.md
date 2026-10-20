@@ -1,7 +1,7 @@
 # lab-mobidist
 
 A Kademlia distributed hash table in Go, built for the D7024E lab (part 1),
-as the storage layer for a decentralized package registry (part 2).
+and a decentralized package registry on top of it (part 2).
 
 - 256-bit IDs: node ID = SHA-256(IP:port), key = SHA-256(value); nodes reject
   values whose hash does not match the key, and clients verify fetched values.
@@ -13,6 +13,13 @@ as the storage layer for a decentralized package registry (part 2).
   transferred over TCP (max 64 MiB per value).
 - The same code runs on an in-process simulated network (latency, packet loss,
   1000+ nodes) and on real sockets (50 Docker containers).
+- Registry (part 2): packages are named `DOMAIN:PACKAGE:VERSION`. Each version
+  is a signed record chained to the previous one; one mutable "latest" pointer
+  per package is the only key that is not the hash of its value. Nodes accept
+  a pointer update only if it is signed by the domain's owner, newer than what
+  they hold, and extends (never forks) the history they hold; a node that fell
+  behind fetches the records it missed. Ownership is a public key in a DNS TXT
+  record (`kademlia-pk=ed25519:<base64>`), real or faked from a file.
 
 Parameters (defaults): k = 10, α = 3, RPC timeout 500 ms with 2 retries,
 bucket refresh and replication every hour.
@@ -20,7 +27,8 @@ bucket refresh and replication every hour.
 ## Requirements
 
 Go 1.26, Docker with Compose (for the container network), Python 3 (for the
-experiment analysis script; standard library only).
+experiment analysis script; standard library only). No Go dependencies
+outside the standard library (`crypto/ed25519` for signatures).
 
 ## Build and test
 
@@ -29,7 +37,7 @@ make build      # bin/kademlia
 make test       # go test ./...
 make race       # go test -race ./...
 make cover      # coverage summary
-go test -short ./...   # skips the 1000-node test
+go test -short ./...   # skips the 1000-node tests
 ```
 
 ## Run a node
@@ -43,6 +51,11 @@ Flags: `-addr`, `-bootstrap`, `-k`, `-alpha`, `-timeout`, `-retries`,
 `-refresh`, `-replicate`, `-log` (JSON event log, default `kademlia.log`).
 An empty IP in `-addr` (e.g. `:4000`) means this host's own IP.
 
+Registry flags: `-key FILE` (the node's signing key, needed to publish),
+`-dns FILE` (a fake DNS file of `DOMAIN kademlia-pk=ed25519:...` lines;
+without it the node does real DNS TXT lookups), and `-keygen FILE`
+(generate a key, print its TXT record, and exit).
+
 Shell commands:
 
 | Command | Description |
@@ -53,7 +66,15 @@ Shell commands:
 | `get KEY [FILENAME]` | fetch a value, save or print it, print where it came from |
 | `lookup ID-PREFIX` | find the k nodes closest to an ID |
 | `show rt` / `show ds` | print the routing table / the local data store |
+| `publish [--force] [--prev=VERSION] DOMAIN:PACKAGE:VERSION FILENAME` | publish a file as a package version |
+| `install DOMAIN:PACKAGE:VERSION [FILENAME]` | fetch a version (`latest` allowed), save or print it |
+| `show DOMAIN:PACKAGE` | print the package's version chain |
+| `show dns DOMAIN` | print the owner key of a domain |
 | `id`, `help`, `exit` | |
+
+Without `--force`, `publish` checks the update before uploading (the key owns
+the domain, the version is newer than the latest, `--prev` is the latest).
+With `--force` it uploads anyway, and the holders refuse it.
 
 ## Docker (50 nodes)
 
@@ -62,9 +83,16 @@ make up             # bootstrap node + 49 nodes
 make joined         # number of nodes that have joined (49 when ready)
 make attach N=7     # shell of node 7 (detach: Ctrl-P Ctrl-Q)
 make store-demo     # store from one new node, fetch from another
+make publish-demo   # publish two versions of demo.test:hello, install from another node
+make reject-demo    # forced rollback, fork and impostor publishes, refused by the holders
 make down
 REPLICATE=20s make up   # shorter replication interval, for demos
 ```
+
+Every container runs with the fake DNS in `demo/dns.txt` and the signing key
+of `demo.test`, so any node can publish as `demo.test`. `demo/other.test.pem`
+is a second domain's key, used by `reject-demo` to show an impostor being
+refused. These keys are for the demo only.
 
 ## Experiments
 
@@ -87,10 +115,12 @@ analysis output (`run.txt`), the CSV files, and the commit it was made from.
 |---|---|
 | `cmd/kademlia` | node binary |
 | `cmd/experiment` | experiment runner |
-| `internal/kademlia` | the protocol: IDs, routing table, lookups, data store, data plane, replication |
+| `internal/kademlia` | the protocol: IDs, routing table, lookups, data store, data plane, replication, mutable keys |
+| `internal/registry` | the package registry: versions, signed records, ownership verification, validation rules, client |
 | `internal/rpc` | request/response layer over unreliable packets |
 | `internal/network` | network abstraction: simulated network and UDP/TCP |
 | `internal/cli` | interactive shell and startup helpers |
 | `internal/testnet` | builds large simulated networks (tests, experiments) |
 | `internal/experiment` | the experiments |
 | `scripts/analyze.py` | analysis of the experiment logs |
+| `demo/` | fake DNS file and signing keys for the Docker demo |

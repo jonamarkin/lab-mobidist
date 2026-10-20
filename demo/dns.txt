@@ -1,0 +1,4 @@
+# Fake DNS for the Docker demo: which key owns which domain.
+# .test is a reserved TLD that never resolves, so real DNS can never shadow it.
+demo.test  kademlia-pk=ed25519:2R6x2KEUWsAoIE8d0Fo87oVlto3eAFrrCEZAfGzNrrE=
+other.test kademlia-pk=ed25519:ACVkMu0c94gp51CbJLL6IsSk0w6OgvcuadWzbE8L49M=

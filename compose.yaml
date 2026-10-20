@@ -3,6 +3,9 @@
 # listens on port 4000 (UDP for RPCs, TCP for value transfers).
 # Start with `make up`, stop with `make down`. For demos, shorten the
 # replication interval: `REPLICATE=20s make up` (default 1h, as in the paper).
+#
+# Every node runs the package registry with the fake DNS in /demo/dns.txt
+# and the signing key of demo.test, so any node can publish packages.
 name: kademlia
 
 services:
@@ -10,7 +13,7 @@ services:
     build: .
     image: kadlab
     hostname: bootstrap
-    command: ["-addr", ":4000", "-replicate", "${REPLICATE:-1h}"]
+    command: ["-addr", ":4000", "-replicate", "${REPLICATE:-1h}", "-dns", "/demo/dns.txt", "-key", "/demo/demo.test.pem"]
     stdin_open: true # keep the shell's input open, so `docker attach` works
     tty: true
     networks: [kademlia]
@@ -18,7 +21,7 @@ services:
   node:
     image: kadlab
     depends_on: [bootstrap]
-    command: ["-addr", ":4000", "-bootstrap", "bootstrap:4000", "-replicate", "${REPLICATE:-1h}"]
+    command: ["-addr", ":4000", "-bootstrap", "bootstrap:4000", "-replicate", "${REPLICATE:-1h}", "-dns", "/demo/dns.txt", "-key", "/demo/demo.test.pem"]
     stdin_open: true
     tty: true
     deploy:

@@ -29,10 +29,6 @@ type Validator interface {
 // ErrNoValidator is returned for UPDATE on a node without a Validator.
 var ErrNoValidator = errors.New("kademlia: mutable values are not enabled on this node")
 
-// updateAttempts bounds how often a local update is re-validated after
-// losing a race with a concurrent update to the same key.
-const updateAttempts = 3
-
 // fetch is the FetchFunc given to the validator: a value lookup, which
 // serves from the local store first.
 func (k *Kademlia) fetch(ctx context.Context, key KademliaID) ([]byte, error) {
@@ -48,12 +44,13 @@ func (k *Kademlia) fetch(ctx context.Context, key KademliaID) ([]byte, error) {
 // since it may take network round trips, so the store is written with a
 // compare-and-swap and the validation repeated if another update got in
 // between: two updates validated against the same old value can never
-// both be stored in arrival order.
+// both be stored in arrival order. Every retry means another update
+// succeeded, so the loop ends when the contention does; ctx bounds it.
 func (k *Kademlia) updateLocal(ctx context.Context, key KademliaID, value []byte) error {
 	if k.cfg.Validator == nil {
 		return ErrNoValidator
 	}
-	for range updateAttempts {
+	for ctx.Err() == nil {
 		current, mutable, ok := k.store.Entry(key)
 		if ok && !mutable {
 			return ErrWrongKind
@@ -77,7 +74,7 @@ func (k *Kademlia) updateLocal(ctx context.Context, key KademliaID, value []byte
 		// Another update changed the key while we validated: validate
 		// again, against what is there now.
 	}
-	return ErrConflict
+	return ctx.Err()
 }
 
 // Refusal is one node's reason for refusing an update.

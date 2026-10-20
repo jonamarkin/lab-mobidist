@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/jonamarkin/lab-mobidist/internal/cli"
 	"github.com/jonamarkin/lab-mobidist/internal/kademlia"
 	"github.com/jonamarkin/lab-mobidist/internal/network"
+	"github.com/jonamarkin/lab-mobidist/internal/registry"
 	"github.com/jonamarkin/lab-mobidist/internal/rpc"
 )
 
@@ -30,18 +32,31 @@ func main() {
 	refresh := flag.Duration("refresh", def.RefreshInterval, "bucket refresh interval (0 disables)")
 	replicate := flag.Duration("replicate", def.ReplicateInterval, "replication interval (0 disables)")
 	logPath := flag.String("log", "kademlia.log", `file for JSON event logs ("-" for stderr)`)
+	keyPath := flag.String("key", "", "signing key (PKCS#8 PEM) for publishing packages; see -keygen")
+	dnsPath := flag.String("dns", "", `fake DNS file of "DOMAIN kademlia-pk=ed25519:..." lines; empty uses real DNS TXT lookups`)
+	keygen := flag.String("keygen", "", "generate a signing key, save it to this file, print its TXT record, and exit")
 	flag.Parse()
 
-	if err := run(*addrFlag, *bootstrap, *logPath, kademlia.Config{
+	if *keygen != "" {
+		if err := cli.Keygen(*keygen, os.Stdout); err != nil {
+			fail(err)
+		}
+		return
+	}
+	if err := run(*addrFlag, *bootstrap, *logPath, *keyPath, *dnsPath, kademlia.Config{
 		K: *k, Alpha: *alpha, RefreshInterval: *refresh, ReplicateInterval: *replicate,
 		RPC: rpc.Config{Timeout: *timeout, Retries: *retries},
 	}); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fail(err)
 	}
 }
 
-func run(addrFlag, bootstrap, logPath string, cfg kademlia.Config) error {
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "error:", err)
+	os.Exit(1)
+}
+
+func run(addrFlag, bootstrap, logPath, keyPath, dnsPath string, cfg kademlia.Config) error {
 	var logOut io.Writer = os.Stderr
 	if logPath != "-" {
 		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -53,6 +68,19 @@ func run(addrFlag, bootstrap, logPath string, cfg kademlia.Config) error {
 	}
 	cfg.Logger = slog.New(slog.NewJSONHandler(logOut, nil))
 
+	// The registry: who owns which domain, and this node's signing key.
+	verifier, err := cli.NewVerifier(dnsPath)
+	if err != nil {
+		return err
+	}
+	cfg.Validator = registry.Validator{Verifier: verifier}
+	var key ed25519.PrivateKey
+	if keyPath != "" {
+		if key, err = registry.LoadKey(keyPath); err != nil {
+			return err
+		}
+	}
+
 	addr, err := cli.ListenAddr(addrFlag)
 	if err != nil {
 		return err
@@ -63,6 +91,9 @@ func run(addrFlag, bootstrap, logPath string, cfg kademlia.Config) error {
 	}
 	defer node.Close()
 	fmt.Printf("node %s listening on %s\n", node.Me().ID.Short(), node.Me().Address)
+	if key != nil {
+		fmt.Printf("signing key loaded: %s\n", registry.EncodePublicKey(key.Public().(ed25519.PublicKey)))
+	}
 
 	// SIGINT/SIGTERM (Ctrl-C, docker stop) end the node like "exit".
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -75,8 +106,10 @@ func run(addrFlag, bootstrap, logPath string, cfg kademlia.Config) error {
 		fmt.Printf("joined via %s\n", bootstrap)
 	}
 
+	shell := cli.NewShell(node, os.Stdout)
+	shell.Registry = registry.NewClient(node, verifier, key)
 	done := make(chan error, 1)
-	go func() { done <- cli.NewShell(node, os.Stdout).Run(os.Stdin) }()
+	go func() { done <- shell.Run(os.Stdin) }()
 	select {
 	case err := <-done:
 		return err

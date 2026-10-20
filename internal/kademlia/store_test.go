@@ -138,14 +138,16 @@ func TestLookupDataNotFound(t *testing.T) {
 
 // A node that is alone stores locally and finds the value itself.
 func TestStoreAlone(t *testing.T) {
+	var logs syncBuffer
+	cfg := testConfig(3)
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	sim := network.NewSimNetwork(network.SimConfig{})
-	k := newTestNetwork(t, sim, 1, testConfig(3))[0]
+	k := newTestNetwork(t, sim, 1, cfg)[0]
 	res, err := k.Store(context.Background(), []byte("solo"))
 	if err != nil || len(res.StoredAt) != 1 || res.StoredAt[0] != k.Me() {
 		t.Fatalf("Store = %+v, %v", res, err)
 	}
-	var logs syncBuffer
-	k.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	logs.reset()
 	found, err := k.LookupData(context.Background(), res.Key)
 	if err != nil || string(found.Value) != "solo" || found.From != k.Me() {
 		t.Errorf("LookupData = %+v, %v", found, err)
@@ -183,8 +185,10 @@ func TestStoreLargeValue(t *testing.T) {
 // as an error) and skipped: the value comes from another holder.
 func TestLookupDataSkipsCorruptCopy(t *testing.T) {
 	var logs syncBuffer
+	cfg := testConfig(1) // alpha 1: probes in order
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	sim := network.NewSimNetwork(network.SimConfig{})
-	nodes := newTestNetwork(t, sim, 30, testConfig(1)) // alpha 1: probes in order
+	nodes := newTestNetwork(t, sim, 30, cfg)
 	ctx := context.Background()
 
 	value := []byte("genuine")
@@ -205,7 +209,7 @@ func TestLookupDataSkipsCorruptCopy(t *testing.T) {
 			break
 		}
 	}
-	reader.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	logs.reset()
 	found, err := reader.LookupData(ctx, res.Key)
 	if err != nil || string(found.Value) != "genuine" {
 		t.Fatalf("LookupData = %q, %v", found.Value, err)

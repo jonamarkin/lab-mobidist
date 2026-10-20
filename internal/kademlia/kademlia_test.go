@@ -402,11 +402,12 @@ func TestRefreshSkipsRecentlyUsedBuckets(t *testing.T) {
 	var logs syncBuffer
 	cfg := testConfig(3)
 	cfg.RefreshInterval = time.Hour // the loop never fires during the test
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	sim := network.NewSimNetwork(network.SimConfig{})
 	nodes := newTestNetwork(t, sim, 10, cfg)
 
 	k := nodes[5]
-	k.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	logs.reset()     // only k's refresh events from here on
 	k.refreshStale() // buckets nodes 6-9 moved into after k joined are stale
 	logs.reset()
 	k.refreshStale()

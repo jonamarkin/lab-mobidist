@@ -12,6 +12,7 @@ import (
 
 	"github.com/jonamarkin/lab-mobidist/internal/kademlia"
 	"github.com/jonamarkin/lab-mobidist/internal/network"
+	"github.com/jonamarkin/lab-mobidist/internal/registry"
 )
 
 // ResolveAddr turns "IP:PORT" or "HOST:PORT" (e.g. "bootstrap:4000" in
@@ -93,4 +94,33 @@ func JoinWithRetry(ctx context.Context, node *kademlia.Kademlia, bootstrap strin
 		}
 	}
 	return err
+}
+
+// NewVerifier returns the ownership verifier for the -dns flag: a fake
+// DNS loaded from dnsFile, or real DNS TXT lookups if dnsFile is empty.
+func NewVerifier(dnsFile string) (registry.Verifier, error) {
+	if dnsFile == "" {
+		return registry.NewDNSVerifier(), nil
+	}
+	fake := registry.NewFakeDNS()
+	if err := fake.LoadFile(dnsFile); err != nil {
+		return nil, err
+	}
+	return fake, nil
+}
+
+// Keygen makes a new signing key, saves it to path, and prints the TXT
+// record a domain owner publishes to prove ownership (-keygen flag).
+func Keygen(path string, out io.Writer) error {
+	pk, sk, err := registry.GenerateKey()
+	if err != nil {
+		return err
+	}
+	if err := registry.SaveKey(path, sk); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "private key saved to %s\n", path)
+	fmt.Fprintf(out, "publish this TXT record on your domain (or add \"DOMAIN %s\" to a -dns file):\n%s\n",
+		registry.EncodePublicKey(pk), registry.EncodePublicKey(pk))
+	return nil
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jonamarkin/lab-mobidist/internal/kademlia"
+	"github.com/jonamarkin/lab-mobidist/internal/registry"
 )
 
 // Shell reads commands line by line and runs them against one node.
@@ -22,6 +23,10 @@ type Shell struct {
 	node    *kademlia.Kademlia
 	out     io.Writer
 	timeout time.Duration // per command
+
+	// Registry serves the package commands (publish, install, show
+	// DOMAIN:PACKAGE, show dns). nil: the node runs the part 1 shell only.
+	Registry *registry.Client
 }
 
 // NewShell returns a shell for node that writes its output to out.
@@ -41,6 +46,13 @@ const help = `commands:
   id                                     print this node's ID and address
   help                                   print this help
   exit                                   terminate the node
+package registry:
+  publish [--force] [--prev=VERSION] DOMAIN:PACKAGE:VERSION FILENAME
+                                         publish a file as a package version
+  install DOMAIN:PACKAGE:VERSION [FILENAME]
+                                         fetch a version ("latest" allowed); save or print it
+  show DOMAIN:PACKAGE                    print the package's version chain
+  show dns DOMAIN                        print the owner key of DOMAIN
 `
 
 // Run executes commands from in until "exit" or end of input.
@@ -91,7 +103,11 @@ func (s *Shell) Execute(line string) (exit bool) {
 	case "lookup":
 		err = s.lookup(ctx, args)
 	case "show":
-		err = s.show(args)
+		err = s.show(ctx, args)
+	case "publish":
+		err = s.publish(ctx, args)
+	case "install":
+		err = s.install(ctx, args)
 	default:
 		err = fmt.Errorf("unknown command %q (try help)", cmd)
 	}
@@ -213,23 +229,29 @@ func (s *Shell) get(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (s *Shell) show(args []string) error {
+func (s *Shell) show(ctx context.Context, args []string) error {
 	switch {
 	case len(args) == 1 && args[0] == "rt":
 		return s.showRT()
 	case len(args) == 1 && args[0] == "ds":
 		return s.showDS()
+	case len(args) == 2 && args[0] == "dns":
+		return s.showDNS(ctx, args[1])
+	case len(args) == 1 && strings.Contains(args[0], ":"):
+		return s.showChain(ctx, args[0])
 	}
-	return errors.New("usage: show rt | show ds")
+	return errors.New("usage: show rt | show ds | show DOMAIN:PACKAGE | show dns DOMAIN")
 }
 
+// showDS lists the data store; package records and latest pointers are
+// decoded, other values are previewed.
 func (s *Shell) showDS() error {
 	ds := s.node.DataStore()
 	keys := ds.Keys()
 	fmt.Fprintf(s.out, "data store of %s: %d values\n", s.node.Me(), len(keys))
 	for _, key := range keys {
-		value, _ := ds.Get(key)
-		fmt.Fprintf(s.out, "  %s  %8d bytes  %s\n", key.Short(), len(value), preview(value))
+		value, mutable, _ := ds.Entry(key)
+		fmt.Fprintf(s.out, "  %s  %8d bytes  %s\n", key.Short(), len(value), describe(value, mutable))
 	}
 	return nil
 }
