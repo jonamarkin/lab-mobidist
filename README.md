@@ -80,6 +80,21 @@ Without `--force`, `publish` checks the update before uploading (the key owns
 the domain, the version is newer than the latest, `--prev` is the latest).
 With `--force` it uploads anyway, and the holders refuse it.
 
+To try the registry locally, start the nodes with the demo DNS file and the
+demo domain's key (both in `demo/`), then publish from one shell and install
+from the other:
+
+```bash
+bin/kademlia -addr 127.0.0.1:4000 -dns demo/dns.txt -key demo/demo.test.pem
+bin/kademlia -addr 127.0.0.1:4001 -bootstrap 127.0.0.1:4000 -dns demo/dns.txt
+> publish demo.test:hello:1.0.0 some-file        # in the first shell
+> install demo.test:hello:latest                 # in the second shell
+> show demo.test:hello
+```
+
+A node started without `-dns` does real DNS TXT lookups, and one started
+without `-key` can install but not publish.
+
 ## Docker (50 nodes)
 
 ```bash
@@ -104,7 +119,8 @@ refused. These keys are for the demo only.
 
 ```bash
 make experiments    # runs both experiments (~10 min), then analyzes the log
-make analyze        # re-analyze results/experiments.jsonl
+make analyze        # re-analyze results/experiments.jsonl from a previous run
+python3 scripts/analyze.py results-final/experiments.jsonl   # analyze the shipped run
 ```
 
 Results (tables and CSV files) are written to `results/`.

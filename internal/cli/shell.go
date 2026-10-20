@@ -261,7 +261,7 @@ func preview(value []byte) string {
 	const max = 32
 	text := string(value[:min(len(value), max)])
 	for _, r := range text {
-		if r < ' ' || r == 0x7f || r == '\uFFFD' {
+		if (r < ' ' && r != '\n' && r != '\r' && r != '\t') || r == 0x7f || r == '\uFFFD' {
 			return "(binary)"
 		}
 	}
