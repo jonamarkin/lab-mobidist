@@ -106,6 +106,8 @@ make demo           # one extra node joins, pings, shows its table, exits
 make store-demo     # store from one new node, fetch from another
 make publish-demo   # publish two versions of demo.test:hello, install from another node
 make reject-demo    # forced rollback, fork and impostor publishes, refused by the holders
+make sprint-demo    # the sprint 3 sequence: v1, install, v2, install latest and v1, then the safety checks
+make shell          # an interactive extra node with the demo key, to type the commands yourself
 make down
 REPLICATE=20s make up   # shorter replication interval, for demos
 ```
@@ -113,7 +115,9 @@ REPLICATE=20s make up   # shorter replication interval, for demos
 Every container runs with the fake DNS in `demo/dns.txt` and the signing key
 of `demo.test`, so any node can publish as `demo.test`. `demo/other.test.pem`
 is a second domain's key, used by `reject-demo` to show an impostor being
-refused. These keys are for the demo only.
+refused. `demo/files/` holds small package files (`v1.txt`, `v2.txt`,
+`v3.txt`, `v5.txt`) available in every container as `/demo/files/`. These
+keys are for the demo only.
 
 ## Experiments
 

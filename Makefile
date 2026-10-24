@@ -1,4 +1,4 @@
-.PHONY: test race cover build experiments analyze up down ps joined attach demo store-demo publish-demo reject-demo
+.PHONY: test race cover build experiments analyze up down ps joined attach demo store-demo publish-demo reject-demo sprint-demo shell
 
 # --- Go ---------------------------------------------------------------
 
@@ -82,3 +82,24 @@ reject-demo:
 	$(IN_NODE) 'echo "bad" > /tmp/bad; \
 	  printf "publish --force demo.test:hello:2.0.0 /tmp/bad\nshow demo.test:hello\nexit\n" \
 	  | kademlia $(NODE_FLAGS) -key /demo/other.test.pem'
+
+# The sprint 3 demonstration sequence, scripted: publish v1, install it
+# elsewhere, publish v2, install latest and v1, then the safety checks:
+# a domain the node does not own, v2 again with another file, v5 and then
+# an attempt to go back to v3. Fresh containers play the different nodes.
+sprint-demo:
+	@echo "=== node A: publish version 1"
+	@$(IN_NODE) 'printf "publish demo.test:hello:1.0.0 /demo/files/v1.txt\nexit\n" | kademlia $(NODE_FLAGS) -key /demo/demo.test.pem'
+	@echo "=== node B: install latest (version 1)"
+	@$(IN_NODE) 'printf "install demo.test:hello:latest\nexit\n" | kademlia $(NODE_FLAGS)'
+	@echo "=== node A: publish version 2"
+	@$(IN_NODE) 'printf "publish demo.test:hello:2.0.0 /demo/files/v2.txt\nexit\n" | kademlia $(NODE_FLAGS) -key /demo/demo.test.pem'
+	@echo "=== node C: install latest (version 2), then version 1"
+	@$(IN_NODE) 'printf "install demo.test:hello:latest\ninstall demo.test:hello:1.0.0\nshow demo.test:hello\nexit\n" | kademlia $(NODE_FLAGS)'
+	@echo "=== node A: safety checks"
+	@$(IN_NODE) 'printf "publish other.test:hello:1.0.0 /demo/files/v1.txt\npublish --force other.test:hello:1.0.0 /demo/files/v1.txt\nshow other.test:hello\npublish --force demo.test:hello:2.0.0 /demo/files/v3.txt\ninstall demo.test:hello:latest\npublish demo.test:hello:5.0.0 /demo/files/v5.txt\npublish demo.test:hello:3.0.0 /demo/files/v3.txt\npublish --force demo.test:hello:3.0.0 /demo/files/v3.txt\nshow demo.test:hello\nexit\n" | kademlia $(NODE_FLAGS) -key /demo/demo.test.pem'
+
+# An interactive extra node with the demo key, for typing the commands
+# yourself (package files are in /demo/files). Exit with "exit".
+shell:
+	docker compose run --rm node $(NODE_FLAGS) -key /demo/demo.test.pem
