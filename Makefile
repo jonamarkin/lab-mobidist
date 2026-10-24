@@ -1,4 +1,4 @@
-.PHONY: test race cover build experiments analyze up down ps joined attach demo store-demo publish-demo reject-demo sprint-demo shell
+.PHONY: test race cover build experiments analyze up down ps joined attach demo store-demo publish-demo reject-demo sprint-demo shell user-shell
 
 # --- Go ---------------------------------------------------------------
 
@@ -99,7 +99,11 @@ sprint-demo:
 	@echo "=== node A: safety checks"
 	@$(IN_NODE) 'printf "publish other.test:hello:1.0.0 /demo/files/v1.txt\npublish --force other.test:hello:1.0.0 /demo/files/v1.txt\nshow other.test:hello\npublish --force demo.test:hello:2.0.0 /demo/files/v3.txt\ninstall demo.test:hello:latest\npublish demo.test:hello:5.0.0 /demo/files/v5.txt\npublish demo.test:hello:3.0.0 /demo/files/v3.txt\npublish --force demo.test:hello:3.0.0 /demo/files/v3.txt\nshow demo.test:hello\nexit\n" | kademlia $(NODE_FLAGS) -key /demo/demo.test.pem'
 
-# An interactive extra node with the demo key, for typing the commands
+# An interactive extra node with the demo.test key, for typing the commands
 # yourself (package files are in /demo/files). Exit with "exit".
 shell:
 	docker compose run --rm node $(NODE_FLAGS) -key /demo/demo.test.pem
+
+# The same without a signing key: a node that can install but not publish.
+user-shell:
+	docker compose run --rm node $(NODE_FLAGS)

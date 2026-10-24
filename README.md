@@ -108,6 +108,7 @@ make publish-demo   # publish two versions of demo.test:hello, install from anot
 make reject-demo    # forced rollback, fork and impostor publishes, refused by the holders
 make sprint-demo    # the sprint 3 sequence: v1, install, v2, install latest and v1, then the safety checks
 make shell          # an interactive extra node with the demo key, to type the commands yourself
+make user-shell     # the same without a key: can install, cannot publish
 make down
 REPLICATE=20s make up   # shorter replication interval, for demos
 ```
